@@ -386,8 +386,9 @@ class MainWindow(QMainWindow):
             self._data_source_combo.setCurrentIndex(ds_index)
         self._data_source_combo.setMinimumWidth(108)
         self._data_source_combo.setToolTip(
+            # [适配] 更新提示文本，说明 AkShare A 股数据源可用
             "K 线数据来源：MT5（需终端登录）、TradingView（tvDatafeed）、"
-            "本地仅支持 MT5 与 TradingView"
+            "AkShare（A 股，免登录，走东方财富）"
         )
         self._data_source_combo.currentIndexChanged.connect(
             self._on_data_source_combo_changed
@@ -1126,7 +1127,10 @@ class MainWindow(QMainWindow):
             self._switch_data_source(kind)
 
     def _on_data_source_combo_changed(self, index: int) -> None:
-        """Switch K-line data source (MT5 / TradingView)."""
+        """Switch K-line data source (MT5 / TradingView / AkShare).
+
+        [适配] 支持 AkShare A 股数据源切换。
+        """
         if getattr(self, "_switching", False):
             return
         if getattr(self, "_demo_mode", False):

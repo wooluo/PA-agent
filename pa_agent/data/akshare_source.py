@@ -375,9 +375,30 @@ class AkShareSource(DataSource):
         raise last_exc
 
     def _fetch_history(self, symbol: str, timeframe: str, n: int) -> list[dict[str, Any]]:
-        try:
-            if timeframe == "1d":
+        # [网络适配] 日线优先走新浪源（东财 push2his 接口在部分网络下不稳定）；
+        # 新浪失败再降级到东财（_fetch_daily_ak），解决国内网络连接问题。
+        if timeframe == "1d":
+            try:
+                rows = self._fetch_daily_sina(symbol, n)
+                if rows:
+                    return rows
+                logger.info("AkShare 新浪日线返回空，降级东财源 %s", symbol)
+            except Exception as exc:
+                logger.warning("AkShare 新浪日线失败 (%s): %s，降级东财源", symbol, exc)
+            try:
                 return self._fetch_daily_ak(symbol, n)
+            except Exception as exc:
+                logger.warning("AkShare 东财日线失败 (%s): %s", symbol, exc)
+                if self._baostock_ok:
+                    try:
+                        return self._fetch_history_baostock(symbol, timeframe, n)
+                    except Exception as bs_exc:
+                        logger.warning("Baostock 备用源失败 (%s): %s", symbol, bs_exc)
+                        raise DataSourceTransientError(
+                            f"AkShare 日线新浪/东财/Baostock 均失败: {exc}; 备用: {bs_exc}"
+                        ) from bs_exc
+                raise DataSourceTransientError(f"AkShare 日线拉取失败: {exc}") from exc
+        try:
             if timeframe == "1h":
                 return self._fetch_minute_ak(symbol, "60", n)
             if timeframe == "4h":
@@ -397,6 +418,46 @@ class AkShareSource(DataSource):
         if self._baostock_ok:
             return self._fetch_history_baostock(symbol, timeframe, n)
         return []
+
+    def _fetch_daily_sina(self, symbol: str, n: int) -> list[dict[str, Any]]:
+        """新浪源日线（ak.stock_zh_a_daily），不依赖东财 push2his 接口。
+
+        东财 push2his 历史K线接口在部分网络链路下不稳定（连接被重置/空响应），
+        新浪源走 hq.sinajs.cn / 网易，更稳定。返回英文列名 date/open/high/low/close。
+
+        [网络适配] 新浪源作为日线主源，东财/Baostock 作为降级备选，
+        解决国内网络环境下东财接口连接不稳定问题。
+        """
+        import akshare as ak
+
+        end = _cn_now().strftime("%Y%m%d")
+        start = (_cn_now() - timedelta(days=max(n * 2, 400))).strftime("%Y%m%d")
+        # 新浪源指数用 stock_zh_index_daily（前缀 sh/sz）
+        if is_index_symbol(symbol):
+            idx = _index_symbol_for_api(symbol)
+            df = self._call_with_retries(
+                f"sina_index_daily {idx}",
+                lambda: ak.stock_zh_index_daily(symbol=idx),
+            )
+            if df is None or df.empty:
+                return []
+            df = df.tail(n + 5)
+            norm = _normalize_ohlcv_df(df, time_col="date")
+            if norm.empty:
+                return []
+            return _df_to_bars_asc(norm, time_col="date")
+        code = normalize_ashare_symbol(symbol)
+        sina_sym = _sina_symbol(code)
+        df = self._call_with_retries(
+            f"sina_daily {sina_sym}",
+            lambda: ak.stock_zh_a_daily(
+                symbol=sina_sym, start_date=start, end_date=end, adjust="qfq"
+            ),
+        )
+        norm = _normalize_ohlcv_df(df, time_col="date")
+        if norm.empty:
+            return []
+        return _df_to_bars_asc(norm.tail(n + 5), time_col="date")
 
     def _fetch_daily_ak(self, symbol: str, n: int) -> list[dict[str, Any]]:
         import akshare as ak
@@ -604,3 +665,12 @@ def _baostock_code(symbol: str) -> str:
     if sym.startswith(("5", "6", "9")):
         return f"sh.{sym}"
     return f"sz.{sym}"
+
+
+def _sina_symbol(code: str) -> str:
+    """6-digit A-share code → 新浪前缀符号（sh/sz）。6/9 开头为沪市。"""
+    if code.startswith(("sh", "sz")):
+        return code
+    if code.startswith(("5", "6", "9")):
+        return f"sh{code}"
+    return f"sz{code}"

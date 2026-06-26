@@ -188,10 +188,21 @@ def _is_minimax(base_url: str) -> bool:
     return "minimax.io" in url or "minimax.com" in url
 
 
+def _is_zhipu(base_url: str) -> bool:
+    """智谱 GLM (open.bigmodel.cn) OpenAI-compatible gateway.
+
+    [适配] 新增智谱 AI 提供商支持，扩展国内大模型选项。
+    """
+    return "bigmodel.cn" in (base_url or "").lower()
+
+
 # Packy claude-officially returns 400 if max_tokens exceeds model output cap.
 _PACKY_CLAUDE_MAX_OUTPUT_TOKENS = 128_000
 # DeepSeek API: max_tokens must be in [1, 393216].
 _DEEPSEEK_MAX_OUTPUT_TOKENS = 393_216
+# 智谱 GLM API: max_tokens must be in [1, 131072].
+# [适配] 智谱 GLM 模型的输出 Token 上限
+_ZHIPU_MAX_OUTPUT_TOKENS = 131_072
 
 
 def _model_uses_claude_adaptive(model: str) -> bool:
@@ -294,6 +305,8 @@ def _provider_max_output_tokens(settings: AIProviderSettings) -> int:
         return _PACKY_CLAUDE_MAX_OUTPUT_TOKENS
     if _is_deepseek_native(settings.base_url):
         return _DEEPSEEK_MAX_OUTPUT_TOKENS
+    if _is_zhipu(settings.base_url):
+        return _ZHIPU_MAX_OUTPUT_TOKENS
     if _is_mimo(settings):
         return mimo_max_output_tokens(settings.model)
     return _PRACTICAL_UNLIMITED_MAX_TOKENS
