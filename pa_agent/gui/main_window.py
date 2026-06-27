@@ -265,6 +265,8 @@ class MainWindow(QMainWindow):
         # 「获取数据」加载指示：点击后置 True，首帧数据到达后恢复
         self._fetch_data_loading: bool = False
         self._fetch_loading_timer: QTimer | None = None
+        # 「重新分析」标志：置 True 时强制全量分析，跳过增量复用（即使无新数据）
+        self._force_full_analysis: bool = False
         # RefreshLoop runs in its own QThread
         self._refresh_loop: Any = None
         self._refresh_thread: QThread | None = None
@@ -341,7 +343,13 @@ class MainWindow(QMainWindow):
         _general_action.triggered.connect(self._open_general_settings_dialog)
         menu_bar.addAction(_general_action)
 
-        # 4. 演示模式 — 保留下拉菜单
+        # 4. 导出分析报告 — 把最近一次分析导出为 Markdown
+        self._export_report_action = QAction("导出分析报告", self)
+        self._export_report_action.triggered.connect(self._on_export_report)
+        self._export_report_action.setEnabled(False)  # 无记录时禁用，有分析后启用
+        menu_bar.addAction(self._export_report_action)
+
+        # 5. 演示模式 — 保留下拉菜单
         demo_menu = menu_bar.addMenu("演示模式")
         self._demo_manual_action = QAction("手动选择记录…", self)
         self._demo_manual_action.triggered.connect(lambda: self._on_demo_menu_action("manual"))
@@ -498,6 +506,28 @@ class MainWindow(QMainWindow):
         self._fetch_data_btn.setToolTip("开始从当前数据源持续拉取 K 线数据并实时更新图表")
         self._fetch_data_btn.clicked.connect(self._on_fetch_data_clicked)
         ctrl_layout.addWidget(self._fetch_data_btn)
+
+        # 导出分析报告按钮（窗口内显眼入口，分析完成后启用）
+        self._export_report_btn = QPushButton("导出报告")
+        self._export_report_btn.setObjectName("exportReportBtn")
+        self._export_report_btn.setToolTip("把最近一次分析导出为 Markdown 报告")
+        self._export_report_btn.setEnabled(False)
+        self._export_report_btn.clicked.connect(self._on_export_report)
+        ctrl_layout.addWidget(self._export_report_btn)
+
+        # AI 模型设置按钮（窗口内显眼入口，替代/补充顶部菜单栏）
+        self._ai_model_settings_btn = QPushButton("AI 模型设置")
+        self._ai_model_settings_btn.setObjectName("aiModelSettingsBtn")
+        self._ai_model_settings_btn.setToolTip("配置 AI 模型、API Key、网络代理等")
+        self._ai_model_settings_btn.clicked.connect(self._open_ai_model_settings_dialog)
+        ctrl_layout.addWidget(self._ai_model_settings_btn)
+
+        # 重新分析按钮：强制全量分析，忽略增量复用（即使无新数据也重新调 AI）
+        self._resubmit_btn = QPushButton("重新分析")
+        self._resubmit_btn.setObjectName("resubmitBtn")
+        self._resubmit_btn.setToolTip("强制重新调用 AI 进行全量分析（忽略增量复用）")
+        self._resubmit_btn.clicked.connect(self._on_resubmit_analysis)
+        ctrl_layout.addWidget(self._resubmit_btn)
 
         self._wait_close_checkbox = QCheckBox("等待最新K线收盘后再提交分析")
         self._wait_close_checkbox.setObjectName("waitCloseCheckbox")
@@ -2790,6 +2820,15 @@ class MainWindow(QMainWindow):
         """Handle the '增量分析' button click — always try incremental mode."""
         self._begin_submit_analysis(force_incremental=True)
 
+    def _on_resubmit_analysis(self) -> None:
+        """「重新分析」：强制全量分析，跳过增量复用（即使无新数据也重新调 AI）。
+
+        通过置 _force_full_analysis 标志，让 _launch_analysis_worker 跳过
+        new_count==0 的复用分支，且以 force_incremental=False 走全量 prompt。
+        """
+        self._force_full_analysis = True
+        self._begin_submit_analysis(force_incremental=False)
+
     def _begin_submit_analysis(self, *, force_incremental: bool) -> None:
         """Shared entry for normal and forced-incremental submit buttons."""
         if not self._can_submit():
@@ -3009,6 +3048,9 @@ class MainWindow(QMainWindow):
         force_incremental: bool = False,
     ) -> None:
         """UI-thread launch after background prep (frame + incremental lookup)."""
+        # 消费并清除「重新分析」标志（用完即清，不影响下次正常提交）
+        force_full = self._force_full_analysis
+        self._force_full_analysis = False
         frame = getattr(prep, "frame", None)
         if frame is None:
             self._analysis_in_progress = False
@@ -3027,6 +3069,27 @@ class MainWindow(QMainWindow):
             self._update_submit_button_state()
             self._status_bar.showMessage(reason)
             QMessageBox.warning(self, "无法增量分析", reason)
+            return
+
+        # 增量分析但无新增已收盘K线：直接复用上次分析结果，跳过 AI 调用。
+        # 用户可在无新数据时反复查看上次结论，节省 token 与时间。
+        # 「重新分析」按钮会置 _force_full_analysis=True 以跳过此复用分支。
+        if (
+            previous_record is not None
+            and incremental_new_bar_count == 0
+            and not force_full
+        ):
+            logger.info(
+                "增量分析：无新增K线（%s %s），复用上次结果，跳过 AI", symbol, timeframe
+            )
+            self._analysis_in_progress = False
+            self._update_submit_button_state()
+            # 先用当前 frame 刷新图表（确保显示最新价格），再重渲染上次决策结论
+            self._chart_widget.set_frame_now(frame, fit_view=False)
+            self._on_record_ready_impl(previous_record)
+            self._status_bar.showMessage(
+                f"无新增已收盘K线，已显示上次分析结论（{symbol} {timeframe}）"
+            )
             return
 
         orchestrator = self._build_orchestrator()
@@ -3069,12 +3132,16 @@ class MainWindow(QMainWindow):
         worker_id = object()
         self._analysis_worker_id = worker_id
 
+        # 「重新分析」强制全量：清除增量上下文，让 orchestrator 走全量 prompt
+        worker_prev = None if force_full else previous_record
+        worker_inc = None if force_full else incremental_new_bar_count
+
         self._worker = _AnalysisWorker(
             orchestrator=orchestrator,
             frame=frame,
             cancel_token=self._cancel_token,
-            previous_record=previous_record,
-            incremental_new_bar_count=incremental_new_bar_count,
+            previous_record=worker_prev,
+            incremental_new_bar_count=worker_inc,
             parent=None,
         )
         def _on_worker_finished(decision: dict) -> None:
@@ -3742,6 +3809,11 @@ class MainWindow(QMainWindow):
         s1_diag = getattr(record, "stage1_diagnosis", None) or {}
         self._last_analysis_record = record
         self._last_stage1_diagnosis = s1_diag if isinstance(s1_diag, dict) else None
+        # 启用「导出分析报告」按钮（有记录才可导出）
+        if getattr(self, "_export_report_action", None) is not None:
+            self._export_report_action.setEnabled(True)
+        if getattr(self, "_export_report_btn", None) is not None:
+            self._export_report_btn.setEnabled(True)
         s2_full = getattr(record, "stage2_decision", None)
         if s2_full:
             from pa_agent.gui.stage2_payload import prepare_stage2_for_ui
@@ -4207,6 +4279,45 @@ class MainWindow(QMainWindow):
         dlg = FeishuSettingsDialog(settings=settings, parent=self)
         dlg.exec()
 
+    def _on_export_report(self) -> None:
+        """把最近一次分析导出为 Markdown 报告，弹出文件保存对话框。"""
+        record = getattr(self, "_last_analysis_record", None)
+        if record is None:
+            self._status_bar.showMessage("尚无分析记录，请先提交分析")
+            return
+        try:
+            from pa_agent.records.report_exporter import export_report_md
+
+            md = export_report_md(record)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("报告生成失败: %s", exc, exc_info=True)
+            QMessageBox.warning(self, "导出失败", f"报告生成失败：{exc}")
+            return
+
+        # 默认文件名：symbol_timeframe_时间戳.md
+        meta = getattr(record, "meta", None) or {}
+        if hasattr(meta, "model_dump"):
+            meta = meta.model_dump()
+        symbol = meta.get("symbol", "report")
+        timeframe = meta.get("timeframe", "")
+        ts = (meta.get("timestamp_local_iso") or "").replace(":", "-").split(".")[0]
+        default_name = f"{symbol}_{timeframe}_{ts}.md" if ts else f"{symbol}_{timeframe}.md"
+
+        from PyQt6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "保存分析报告", default_name, "Markdown 文件 (*.md);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(md)
+            self._status_bar.showMessage(f"报告已导出：{path}")
+            logger.info("分析报告已导出: %s", path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "保存失败", f"文件保存失败：{exc}")
+
     def _open_general_settings_dialog(self) -> None:
         """打开通用设置对话框."""
         from pa_agent.gui.general_settings_dialog import GeneralSettingsDialog
@@ -4315,6 +4426,9 @@ class MainWindow(QMainWindow):
                 )
             else:
                 self._incremental_submit_btn.setToolTip(reason or "")
+        # 「重新分析」按钮与提交按钮联动启停
+        if hasattr(self, "_resubmit_btn"):
+            self._resubmit_btn.setEnabled(can)
         if can:
             self._submit_btn.setToolTip("")
         else:
