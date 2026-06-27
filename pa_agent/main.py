@@ -10,6 +10,15 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 强制行情数据源直连：覆盖全局 NO_PROXY 为 "*"。
+    # requests 见到 no_proxy="*" 会对所有主机一律绕过代理（含 macOS 系统代理），
+    # 彻底根治「关掉代理软件但系统代理仍残留 → 行情请求被发往死端口」的 bug。
+    # AI 大模型客户端不受影响（它走显式 httpx.Client，不读 NO_PROXY）。
+    import os as _os
+
+    _os.environ["NO_PROXY"] = "*"
+    _os.environ["no_proxy"] = "*"
+
     # Early diagnostics before Qt / heavy imports: crash dumps + file logging.
     from pa_agent.util.crash_diagnostics import enable_crash_diagnostics, log_startup_diagnostics
     from pa_agent.util.logging import configure_logging
@@ -17,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     enable_crash_diagnostics()
     configure_logging()
     log_startup_diagnostics()
+    logger.info("行情数据源已强制直连 (NO_PROXY=*)")
 
     argv = list(sys.argv if argv is None else argv)
     app = QApplication(argv)

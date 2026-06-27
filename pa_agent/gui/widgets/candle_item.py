@@ -11,10 +11,10 @@ if TYPE_CHECKING:
     from pa_agent.data.base import KlineBar
 
 # Candle colors — brighter for better contrast on dark backgrounds
-# close >= open → price went UP → green
-# close <  open → price went DOWN → red
-_COLOR_UP = QColor(0, 208, 132)    # #00d084  vivid green
-_COLOR_DOWN = QColor(255, 71, 87)  # #ff4757  vivid red
+# A 股惯例：close >= open → price went UP → red；close < open → DOWN → green
+# （西方惯例为涨绿跌红，本程序面向 A 股，故采用涨红跌绿）
+_COLOR_UP = QColor(255, 71, 87)    # #ff4757  vivid red   (涨)
+_COLOR_DOWN = QColor(0, 208, 132)  # #00d084  vivid green (跌)
 
 # Candle body width as a fraction of the x-spacing (0..1)
 _BODY_WIDTH = 0.68

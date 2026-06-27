@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -101,6 +102,34 @@ class AIModelSettingsDialog(QDialog):
 
         root.addWidget(provider_group)
 
+        # ── 网络代理（仅作用于 AI 客户端；行情始终直连） ──────────────────────
+        proxy_group = QGroupBox("网络代理")
+        proxy_form = QFormLayout(proxy_group)
+
+        self._proxy_enabled_check = QCheckBox("启用代理（仅对 AI 请求生效）")
+        self._proxy_enabled_check.setToolTip(
+            "启用后，AI 大模型请求将通过下方代理转发（用于访问 DeepSeek/OpenAI 等国外网关）。\n"
+            "行情数据源（A股/东方财富）始终直连，不受此设置影响。"
+        )
+        self._proxy_enabled_check.toggled.connect(self._on_proxy_enabled_toggled)
+        proxy_form.addRow(self._proxy_enabled_check)
+
+        self._proxy_scheme_combo = QComboBox()
+        self._proxy_scheme_combo.addItem("HTTP", "http")
+        self._proxy_scheme_combo.addItem("SOCKS5", "socks5")
+        proxy_form.addRow("协议:", self._proxy_scheme_combo)
+
+        self._proxy_host_edit = QLineEdit()
+        self._proxy_host_edit.setPlaceholderText("127.0.0.1")
+        proxy_form.addRow("代理地址:", self._proxy_host_edit)
+
+        self._proxy_port_spin = QSpinBox()
+        self._proxy_port_spin.setRange(1, 65535)
+        self._proxy_port_spin.setValue(7890)
+        proxy_form.addRow("端口:", self._proxy_port_spin)
+
+        root.addWidget(proxy_group)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Cancel
@@ -126,6 +155,16 @@ class AIModelSettingsDialog(QDialog):
         idx = self._reasoning_effort_combo.findText(p.reasoning_effort)
         if idx >= 0:
             self._reasoning_effort_combo.setCurrentIndex(idx)
+        self._proxy_enabled_check.blockSignals(True)
+        self._proxy_enabled_check.setChecked(bool(getattr(p, "proxy_enabled", False)))
+        self._proxy_enabled_check.blockSignals(False)
+        scheme = getattr(p, "proxy_scheme", "http")
+        sidx = self._proxy_scheme_combo.findData(scheme)
+        if sidx >= 0:
+            self._proxy_scheme_combo.setCurrentIndex(sidx)
+        self._proxy_host_edit.setText(getattr(p, "proxy_host", "127.0.0.1"))
+        self._proxy_port_spin.setValue(int(getattr(p, "proxy_port", 7890)))
+        self._on_proxy_enabled_toggled(self._proxy_enabled_check.isChecked())
 
     def _on_save(self) -> None:
         p = self._settings.provider
@@ -165,6 +204,11 @@ class AIModelSettingsDialog(QDialog):
         p.thinking = self._thinking_check.isChecked()
         p.reasoning_effort = self._reasoning_effort_combo.currentText()  # type: ignore[assignment]
 
+        p.proxy_enabled = self._proxy_enabled_check.isChecked()
+        p.proxy_scheme = self._proxy_scheme_combo.currentData()  # type: ignore[assignment]
+        p.proxy_host = self._proxy_host_edit.text().strip() or "127.0.0.1"
+        p.proxy_port = self._proxy_port_spin.value()
+
         save_settings(self._settings, SETTINGS_JSON_PATH)
         self.accept()
 
@@ -181,6 +225,11 @@ class AIModelSettingsDialog(QDialog):
         else:
             self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
             self._show_key_btn.setText("隐藏")
+
+    def _on_proxy_enabled_toggled(self, enabled: bool) -> None:
+        """启用代理时才允许编辑地址/端口；未启用时置灰。"""
+        for w in (self._proxy_scheme_combo, self._proxy_host_edit, self._proxy_port_spin):
+            w.setEnabled(enabled)
 
     def _apply_cursor_provider(self, *, preferred_model: str = "") -> str | None:
         from pa_agent.ai.cursor_connector import apply_cursor_provider_to_settings

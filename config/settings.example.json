@@ -5,7 +5,11 @@
     "api_key_encrypted": "",
     "thinking": true,
     "reasoning_effort": "high",
-    "context_window": 128000
+    "context_window": 128000,
+    "proxy_enabled": false,
+    "proxy_scheme": "http",
+    "proxy_host": "127.0.0.1",
+    "proxy_port": 7890
   },
   "general": {
     "analysis_bar_count": 100,

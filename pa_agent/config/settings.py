@@ -20,6 +20,22 @@ class AIProviderSettings(BaseModel):
     thinking: bool = True
     reasoning_effort: Literal["low", "medium", "high", "max"] = "high"
     context_window: int = 2_000_000
+    #: 网络代理（仅作用于 AI 大模型客户端；行情数据源始终直连）。
+    #: 解决国内访问 DeepSeek/OpenAI 等需代理，而国内行情接口绝不能走代理的冲突。
+    proxy_enabled: bool = False
+    proxy_scheme: Literal["http", "socks5"] = "http"
+    proxy_host: str = "127.0.0.1"
+    proxy_port: int = 7890
+
+    @field_validator("proxy_port", mode="before")
+    @classmethod
+    def _coerce_proxy_port(cls, v: object) -> object:
+        if v in (None, ""):
+            return 7890
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 7890
 
 
 class PromptSettings(BaseModel):

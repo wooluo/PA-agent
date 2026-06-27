@@ -34,6 +34,30 @@ logger = logging.getLogger(__name__)
 _MIMO_REASONING_CACHE = ReasoningCache()
 
 
+def build_ai_http_client(settings: AIProviderSettings) -> Any:
+    """Build an httpx.Client for the OpenAI SDK, applying AI proxy config.
+
+    ``trust_env=False`` 确保客户端只认此处显式构造的代理，既不受全局环境变量
+    （HTTP_PROXY 等）也不受 macOS 系统代理残留影响。
+
+    - 代理启用：走用户配置的代理（http/socks5），用于访问国外 AI 网关；
+    - 代理未启用：直连，且忽略系统代理（根治代理软件异常退出后系统代理残留
+      导致 AI 请求被发往死端口的 bug）。
+
+    Note: 行情数据源（akshare/东财，走 requests）不经过本函数，它们在程序启动时
+    已被 ``NO_PROXY=*`` 强制直连——AI 与行情代理路径完全独立。
+    """
+    import httpx
+
+    if settings.proxy_enabled:
+        host = (settings.proxy_host or "127.0.0.1").strip() or "127.0.0.1"
+        port = int(settings.proxy_port or 7890)
+        proxy_url = f"{settings.proxy_scheme}://{host}:{port}"
+        logger.info("AI HTTP client using proxy: %s", proxy_url)
+        return httpx.Client(proxy=proxy_url, trust_env=False)
+    return httpx.Client(trust_env=False)
+
+
 @dataclass
 class AIUsage:
     """Token usage from a single API call."""
@@ -479,6 +503,7 @@ class DeepSeekClient:
         client = _OpenAI(
             base_url=self._settings.base_url,
             api_key=self._settings.api_key,
+            http_client=build_ai_http_client(self._settings),
         )
 
         t0 = time.monotonic()
@@ -645,6 +670,7 @@ class DeepSeekClient:
         client = _OpenAI(
             base_url=self._settings.base_url,
             api_key=self._settings.api_key,
+            http_client=build_ai_http_client(self._settings),
         )
 
         t0 = time.monotonic()
