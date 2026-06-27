@@ -120,6 +120,7 @@ class _AnalysisWorker(QThread):
     stage_prompt_ready = pyqtSignal(str, str, str)  # (stage, system, user)
     stage2_files_ready = pyqtSignal(list)  # strategy .txt filenames for stage 2
     retry_occurred = pyqtSignal(str)  # stage ("stage1" or "stage2")
+    usage_update = pyqtSignal(dict)  # cumulative usage_total after each stage
 
     def __init__(
         self,
@@ -179,6 +180,9 @@ class _AnalysisWorker(QThread):
         def on_stage2_files(files: list[str]) -> None:
             self.stage2_files_ready.emit(files)
 
+        def on_usage(usage_total: object) -> None:
+            self.usage_update.emit(dict(usage_total or {}))
+
         try:
             record = self._orchestrator.submit(
                 self._frame,
@@ -192,6 +196,7 @@ class _AnalysisWorker(QThread):
                 on_stage2_files=on_stage2_files,
                 previous_record=self._previous_record,
                 incremental_new_bar_count=self._incremental_new_bar_count,
+                on_usage=on_usage,
             )
             decision = record.stage2_decision or {}
         except Exception as exc:  # noqa: BLE001
@@ -257,6 +262,9 @@ class MainWindow(QMainWindow):
         self._startup_tv_connectivity_check_done = False
         self._symbol_switch_timer: QTimer | None = None
         self._pending_symbol_switch: tuple[str, str] | None = None
+        # 「获取数据」加载指示：点击后置 True，首帧数据到达后恢复
+        self._fetch_data_loading: bool = False
+        self._fetch_loading_timer: QTimer | None = None
         # RefreshLoop runs in its own QThread
         self._refresh_loop: Any = None
         self._refresh_thread: QThread | None = None
@@ -538,6 +546,36 @@ class MainWindow(QMainWindow):
         )
         self._keep_analysis_checkbox.stateChanged.connect(self._on_keep_analysis_checkbox_changed)
         ctrl_layout.addWidget(self._keep_analysis_checkbox)
+
+        # ── 均线显示开关（MA5/MA10/MA25/MA60）──────────────────────────────
+        from PyQt6.QtWidgets import QFrame as _QFrame
+
+        _ma_sep = _QFrame()
+        _ma_sep.setFrameShape(_QFrame.Shape.VLine)
+        _ma_sep.setFrameShadow(_QFrame.Shadow.Sunken)
+        ctrl_layout.addWidget(_ma_sep)
+
+        self._ma_checkboxes: dict[str, QCheckBox] = {}
+        _ma_defs = [
+            ("ma5", "MA5", "#a78bfa"),
+            ("ma10", "MA10", "#38bdf8"),
+            ("ma25", "MA25", "#fb923c"),
+            ("ma60", "MA60", "#34d399"),
+        ]
+        for key, label, hex_color in _ma_defs:
+            cb = QCheckBox(label)
+            cb.setChecked(False)
+            cb.setToolTip(f"显示 {label} 均线")
+            cb.setStyleSheet(f"QCheckBox {{ color: {hex_color}; padding: 0 2px; }}")
+            cb.stateChanged.connect(lambda state, k=key: self._on_ma_checkbox_changed(k, state))
+            ctrl_layout.addWidget(cb)
+            self._ma_checkboxes[key] = cb
+        # 应用持久化的显示偏好
+        if _settings is not None:
+            for key in self._ma_checkboxes:
+                self._ma_checkboxes[key].setChecked(
+                    bool(getattr(_settings.general, f"chart_show_{key}", False))
+                )
 
         # Reset persisted keep_analysis flag so future restarts also start unchecked
         if _settings is not None:
@@ -969,7 +1007,13 @@ class MainWindow(QMainWindow):
         self._symbol_combo.setCurrentText(sym)
         self._symbol_combo.blockSignals(False)
         if kind == "akshare":
-            if self._tf_combo.currentText() not in ("1h", "4h", "1d"):
+            cur_tf = self._tf_combo.currentText()
+            data_source = getattr(self._ctx, "data_source", None)
+            try:
+                supported = list(data_source.supported_timeframes()) if data_source else []
+            except Exception:  # noqa: BLE001
+                supported = []
+            if cur_tf not in supported:
                 self._tf_combo.setCurrentText(A_SHARE_DEFAULT_TIMEFRAME)
 
     def _apply_tv_exchange_to_source(self, data_source: Any) -> None:
@@ -1089,7 +1133,7 @@ class MainWindow(QMainWindow):
 
     def _populate_timeframe_combo_for_source(self) -> None:
         data_source = getattr(self._ctx, "data_source", None)
-        preferred = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+        preferred = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"]
         supported: list[str] = []
         if data_source is not None:
             try:
@@ -1404,6 +1448,33 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("图表已恢复实时更新")
         self._refresh_chart_once()
 
+    def _set_fetch_data_loading(self, loading: bool) -> None:
+        """切换「获取数据」按钮的加载指示状态。
+
+        loading=True 时按钮显示「获取中…」并禁用，避免用户以为卡住；
+        首帧数据到达（_on_refresh_frame_ready）后恢复为「获取数据」。
+        若 15 秒内无数据到达（网络异常等），超时自动恢复，避免按钮永久禁用。
+        """
+        self._fetch_data_loading = loading
+        btn = getattr(self, "_fetch_data_btn", None)
+        if btn is None:
+            return
+        timer = getattr(self, "_fetch_loading_timer", None)
+        if timer is not None:
+            timer.stop()
+        if loading:
+            btn.setText("获取中…")
+            btn.setEnabled(False)
+            # 超时兜底：15 秒后自动恢复（首帧正常到达会提前清除）
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: self._set_fetch_data_loading(False))
+            timer.start(15000)
+            self._fetch_loading_timer = timer
+        else:
+            btn.setText("获取数据")
+            btn.setEnabled(True)
+
     def _on_fetch_data_clicked(self) -> None:
         """Start (or restart) continuous data refresh for the current symbol/timeframe."""
         data_source = getattr(self._ctx, "data_source", None)
@@ -1442,6 +1513,7 @@ class MainWindow(QMainWindow):
         # Stop any existing loop first so we can start fresh
         self._stop_refresh_loop()
         self._set_chart_refresh_paused(False)
+        self._set_fetch_data_loading(True)
         self._start_refresh_loop()
 
     def _ensure_refresh_loop_running(self) -> None:
@@ -1660,6 +1732,9 @@ class MainWindow(QMainWindow):
         """
         if bars:
             self._last_frame_ready_bars = list(bars)
+            # 首帧数据到达，恢复「获取数据」按钮
+            if self._fetch_data_loading:
+                self._set_fetch_data_loading(False)
             from pa_agent.data.bar_close_wait import current_forming_ts
 
             ts = current_forming_ts(
@@ -1723,6 +1798,27 @@ class MainWindow(QMainWindow):
             frame = self._build_chart_frame_from_bars(
                 bars, include_forming=self._chart_wants_forming_bar()
             )
+            # 容错：某些周期（如 A 股 4h）因数据源历史深度有限（东财60分钟线仅
+            # 返回约 100 根，重采样成 4h 后仅约 30 根），不足 analysis_bar_count
+            # 要求时 build_display_frame 会返回 None，导致图表卡在旧图。
+            # 此时逐步降低要求的 bar 数量重试，保证图表至少能显示出来。
+            # EMA20/ATR14 在数据不足时返回 nan（不报错），故硬下限设为 20。
+            if frame is None:
+                requested = self._analysis_bar_count()
+                for try_n in (requested // 2, 30, 20):
+                    if try_n >= 20 and try_n < requested:
+                        frame = self._build_chart_frame_from_bars(
+                            bars,
+                            bar_count=try_n,
+                            include_forming=self._chart_wants_forming_bar(),
+                        )
+                        if frame is not None:
+                            logger.info(
+                                "Chart bars (%d) < required %d for %s; rendered with %d bars",
+                                len(bars), requested,
+                                self._tf_combo.currentText(), try_n,
+                            )
+                            break
             if frame is None:
                 return
 
@@ -1888,6 +1984,7 @@ class MainWindow(QMainWindow):
             data_source = getattr(self._ctx, "data_source", None)
             if data_source is not None and getattr(data_source, "_connected", False):
                 self._start_refresh_loop()
+                self._set_fetch_data_loading(True)
 
             # Check for prior analysis record — if found, show a hint in the
             # status bar but do NOT auto-trigger analysis; the user decides
@@ -2158,6 +2255,22 @@ class MainWindow(QMainWindow):
             self._exit_demo_mode()
         else:
             self._start_demo_mode(mode)
+
+    def _on_ma_checkbox_changed(self, key: str, state: int) -> None:
+        """均线显示开关变化：应用到图表并持久化到设置。"""
+        visible = bool(state)
+        chart = getattr(self, "_chart_widget", None)
+        if chart is not None:
+            chart.set_ma_visible(key, visible)
+        settings = getattr(self._ctx, "settings", None)
+        if settings is not None:
+            try:
+                setattr(settings.general, f"chart_show_{key}", visible)
+                from pa_agent.config.settings import save_settings
+
+                save_settings(settings)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Failed to persist chart_show_%s: %s", key, exc)
 
     def _on_keep_analysis_checkbox_changed(self, _state: int) -> None:
         """Handle keep-analysis checkbox state change.
@@ -2988,6 +3101,8 @@ class MainWindow(QMainWindow):
             self._worker.stage_prompt_ready.connect(panel.on_stage_prompt_ready)
             self._worker.reasoning_token.connect(panel.on_reasoning_token)
             self._worker.content_token.connect(panel.on_content_token)
+        # 实时推送累计 token 用量到进度条（stage1/stage2 完成后各更新一次）
+        self._worker.usage_update.connect(self._on_analysis_usage_update)
 
         self._worker.stage2_files_ready.connect(
             self._on_stage2_files_ready,
@@ -3157,6 +3272,31 @@ class MainWindow(QMainWindow):
 
         pf.set_stage2_files(stage2_prompt_txt_files(strategy_files))
         pf.set_extras(stage1_builtin=True, stage2_builtin=True)
+
+    def _on_analysis_usage_update(self, usage_total: dict) -> None:
+        """实时更新流式面板的上下文进度条（stage1/stage2 完成后各触发一次）。
+
+        修复「分析过程中进度条不变，完成后才跳一次」的体验问题。
+        usage_total 来自 orchestrator 的 on_usage 回调，含累计 token 用量。
+        """
+        panel = getattr(self, "_stream_panel", None)
+        if panel is None:
+            return
+        prompt_tokens = usage_total.get("prompt_tokens", 0)
+        completion_tokens = usage_total.get("completion_tokens", 0)
+        total_tokens = usage_total.get("total_tokens", 0) or (prompt_tokens + completion_tokens)
+        cached_tokens = usage_total.get("cached_prompt_tokens", 0)
+        context_window = 1_000_000
+        settings = getattr(self._ctx, "settings", None)
+        if settings is not None:
+            context_window = getattr(settings.provider, "context_window", 1_000_000) or 1_000_000
+        panel.update_token_display({
+            "context_used": total_tokens,
+            "context_window": context_window,
+            "total_input": prompt_tokens,
+            "total_cached_input": cached_tokens,
+            "total_output": completion_tokens,
+        })
 
     def _current_stage1_diagnosis(self) -> dict:
         """Stage-1 diagnosis for the analysis that just finished."""
@@ -4091,6 +4231,11 @@ class MainWindow(QMainWindow):
             chart.set_seq_label_font_pt(
                 int(getattr(settings.general, "chart_seq_label_font_pt", 7) or 7)
             )
+            # 应用均线显示开关
+            for ma in ("ma5", "ma10", "ma25", "ma60"):
+                chart.set_ma_visible(
+                    ma, bool(getattr(settings.general, f"chart_show_{ma}", False))
+                )
         flow_viz = getattr(self, "_decision_flow_viz_panel", None)
         if flow_viz is not None:
             flow_viz.refit_view()

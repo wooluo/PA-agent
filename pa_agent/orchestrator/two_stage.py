@@ -350,6 +350,7 @@ class TwoStageOrchestrator:
         on_stage2_files: Callable[[list[str]], None] | None = None,
         previous_record: AnalysisRecord | None = None,
         incremental_new_bar_count: int | None = None,
+        on_usage: Callable[[Any], None] | None = None,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -593,6 +594,9 @@ class TwoStageOrchestrator:
 
         # ── Step 9: Stage 1 done ──────────────────────────────────────────────
         on_event(OrchestratorEvent.Stage1Done)
+        if on_usage is not None:
+            # 推送截至 stage1 完成的累计 usage（不写回 record，避免与终点重复累积）
+            on_usage(_accumulate_usage_calls({}, s1_usage_calls))
 
         # ── Step 10: Route strategy files ─────────────────────────────────────
         if callable(self._router) and not hasattr(self._router, "route"):
@@ -915,6 +919,11 @@ class TwoStageOrchestrator:
 
         # ── Step 19: Stage 2 done ─────────────────────────────────────────────
         on_event(OrchestratorEvent.Stage2Done)
+        if on_usage is not None:
+            # 推送累计 usage（stage1 + stage2 全部调用），不写回 record
+            on_usage(_accumulate_usage_calls(
+                _accumulate_usage_calls({}, s1_usage_calls), s2_usage_calls,
+            ))
 
         # ── Step 19.5: Log next_bar_prediction (R9.3, NFR2.1) ───────────────────
         _pred = stage2_json if isinstance(stage2_json, dict) else {}

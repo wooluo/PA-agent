@@ -8,6 +8,8 @@ import time
 from pa_agent.data.base import KlineBar
 
 _TIMEFRAME_SECONDS_RE = re.compile(r"^(\d+)([mhdw])$", re.IGNORECASE)
+# Month (1M, uppercase M, MT5 convention) handled separately below — must NOT
+# go through the regex above, whose IGNORECASE would treat M as minutes.
 
 # Month uses uppercase M in MT5; UI combos use lowercase units only.
 _TIMEFRAME_SECONDS = {
@@ -17,16 +19,22 @@ _TIMEFRAME_SECONDS = {
     "1h": 60 * 60,
     "4h": 4 * 60 * 60,
     "1d": 24 * 60 * 60,
+    "1w": 7 * 24 * 60 * 60,
+    "1M": 30 * 24 * 60 * 60,  # 月线按 30 天近似（28~31 天不等）
 }
 
 
 def timeframe_to_seconds(timeframe: str) -> int | None:
-    """Map timeframe string (e.g. ``5m``, ``1h``) to bar duration in seconds."""
+    """Map timeframe string (e.g. ``5m``, ``1h``, ``1w``, ``1M``) to bar duration in seconds."""
     tf = str(timeframe or "").strip()
     if not tf:
         return None
     if tf in _TIMEFRAME_SECONDS:
         return _TIMEFRAME_SECONDS[tf]
+    # 月线大写 M 必须先于正则判断（避免被当成分钟 m）
+    m_match = re.match(r"^(\d+)M$", tf)
+    if m_match:
+        return int(m_match.group(1)) * 30 * 24 * 60 * 60
     m = _TIMEFRAME_SECONDS_RE.match(tf)
     if not m:
         return None
@@ -127,8 +135,10 @@ def is_bar_still_forming(
         return False
     if now_ms is None:
         now_ms = int(time.time() * 1000)
-    tf = str(timeframe or "").strip().lower()
-    if tf == "1d" and _looks_like_ashare_symbol(symbol):
+    tf = str(timeframe or "").strip()
+    # A股 session 感知：日线/周线/月线仅在交易时段内视为未收盘。
+    # 周线以周五收盘为准、月线以月末收盘为准，非交易时段应判为已收盘。
+    if tf in ("1d", "1w", "1M") and _looks_like_ashare_symbol(symbol):
         try:
             from pa_agent.data.akshare_source import _ashare_session_open
 
@@ -148,11 +158,11 @@ def is_bar_still_forming(
     if int(now_ms) >= close_ms:
         return False
 
-    # Safety net for daily/weekly bars: broker server time may be stale (no
-    # ticks during weekend / halt), causing now_ms to lag behind real time.
+    # Safety net for daily/weekly/monthly bars: broker server time may be stale
+    # (no ticks during weekend / halt), causing now_ms to lag behind real time.
     # If local wall-clock time is more than duration + 6 h past ts_open,
     # the bar has definitely closed regardless of broker time.
-    if tf in ("1d", "1w"):
+    if tf in ("1d", "1w", "1M"):
         local_ms = int(time.time() * 1000)
         # 6 h safety margin covers all known broker UTC offsets (UTC-5 to UTC+5).
         safety_ms = 6 * 3600 * 1000

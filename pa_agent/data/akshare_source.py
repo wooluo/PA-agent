@@ -29,7 +29,14 @@ _MINUTE_PERIOD: dict[str, str] = {
     "1h": "60",
 }
 
-_SUPPORTED_TIMEFRAMES: tuple[str, ...] = ("1h", "4h", "1d")
+# PA Agent timeframe → AkShare stock_zh_a_hist period (日线/周线/月线)
+_DAILY_PERIOD: dict[str, str] = {
+    "1d": "daily",
+    "1w": "weekly",
+    "1M": "monthly",
+}
+
+_SUPPORTED_TIMEFRAMES: tuple[str, ...] = ("1h", "4h", "1d", "1w", "1M")
 
 # Preset symbols for the combo; user may type any 6-digit code or sh/sz index id.
 _PRESET_SYMBOLS: tuple[str, ...] = (
@@ -112,6 +119,11 @@ def _row_time_to_ts_ms(value: Any) -> int:
     try:
         import pandas as pd
 
+        # pd.NaT 不是 None、不是 Timestamp（isinstance 返回 False），需显式拦截，
+        # 否则会落到字符串解析分支并抛 "NaTType does not support timestamp"。
+        # akshare 周线/月线数据偶发含 NaT（停牌缺数据/网络抖动），用当前时间兜底。
+        if value is pd.NaT or (hasattr(pd, "isna") and bool(pd.isna(value))):
+            return int(_cn_now().timestamp() * 1000)
         if isinstance(value, pd.Timestamp):
             ts = value
             if ts.tz is None:
@@ -377,18 +389,20 @@ class AkShareSource(DataSource):
     def _fetch_history(self, symbol: str, timeframe: str, n: int) -> list[dict[str, Any]]:
         # [网络适配] 日线优先走新浪源（东财 push2his 接口在部分网络下不稳定）；
         # 新浪失败再降级到东财（_fetch_daily_ak），解决国内网络连接问题。
-        if timeframe == "1d":
+        # 周线/月线新浪源不支持，直接走东财 stock_zh_a_hist(period=weekly/monthly)。
+        if timeframe in ("1d", "1w", "1M"):
+            if timeframe == "1d":
+                try:
+                    rows = self._fetch_daily_sina(symbol, n)
+                    if rows:
+                        return rows
+                    logger.info("AkShare 新浪日线返回空，降级东财源 %s", symbol)
+                except Exception as exc:
+                    logger.warning("AkShare 新浪日线失败 (%s): %s，降级东财源", symbol, exc)
             try:
-                rows = self._fetch_daily_sina(symbol, n)
-                if rows:
-                    return rows
-                logger.info("AkShare 新浪日线返回空，降级东财源 %s", symbol)
+                return self._fetch_daily_ak(symbol, n, timeframe=timeframe)
             except Exception as exc:
-                logger.warning("AkShare 新浪日线失败 (%s): %s，降级东财源", symbol, exc)
-            try:
-                return self._fetch_daily_ak(symbol, n)
-            except Exception as exc:
-                logger.warning("AkShare 东财日线失败 (%s): %s", symbol, exc)
+                logger.warning("AkShare 东财 %s 失败 (%s): %s", timeframe, symbol, exc)
                 if self._baostock_ok:
                     try:
                         return self._fetch_history_baostock(symbol, timeframe, n)
@@ -459,12 +473,21 @@ class AkShareSource(DataSource):
             return []
         return _df_to_bars_asc(norm.tail(n + 5), time_col="date")
 
-    def _fetch_daily_ak(self, symbol: str, n: int) -> list[dict[str, Any]]:
+    def _fetch_daily_ak(self, symbol: str, n: int, *, timeframe: str = "1d") -> list[dict[str, Any]]:
         import akshare as ak
 
+        period = _DAILY_PERIOD.get(timeframe, "daily")
+        # 周线/月线需要更长的日期范围（n 根周线 ≈ n*7 天，月线 ≈ n*30 天）
+        days_span = n * 2
+        if timeframe == "1w":
+            days_span = n * 8
+        elif timeframe == "1M":
+            days_span = n * 32
         end = _cn_now().strftime("%Y%m%d")
-        start = (_cn_now() - timedelta(days=max(n * 2, 400))).strftime("%Y%m%d")
+        start = (_cn_now() - timedelta(days=max(days_span, 400))).strftime("%Y%m%d")
         if is_index_symbol(symbol):
+            # 指数接口 stock_zh_index_daily_em 仅支持日线；周/月线无原生支持，
+            # 拉日线后由上层容错处理（已知限制）。
             idx = _index_symbol_for_api(symbol)
             df = self._call_with_retries(
                 f"index_daily {idx}",
@@ -479,10 +502,10 @@ class AkShareSource(DataSource):
             return _df_to_bars_asc(norm, time_col="date")
         code = normalize_ashare_symbol(symbol)
         df = self._call_with_retries(
-            f"daily {code}",
+            f"{timeframe} {code}",
             lambda: ak.stock_zh_a_hist(
                 symbol=code,
-                period="daily",
+                period=period,
                 start_date=start,
                 end_date=end,
                 adjust="qfq",

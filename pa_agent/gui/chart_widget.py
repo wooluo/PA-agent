@@ -26,6 +26,13 @@ if TYPE_CHECKING:
 
 _TIMER_INTERVAL_MS = 33  # ~30 Hz
 _EMA_COLOR = (255, 200, 0)  # amber
+# MA 配色：MA5 紫 / MA10 蓝 / MA25 橙 / MA60 绿，避开 EMA 琥珀色
+_MA_COLORS: dict[str, tuple[int, int, int]] = {
+    "ma5": (167, 139, 250),   # 紫 #a78bfa
+    "ma10": (56, 189, 248),   # 蓝 #38bdf8
+    "ma25": (251, 146, 60),   # 橙 #fb923c
+    "ma60": (52, 211, 153),   # 绿 #34d399
+}
 _NO_ORDER_TEXT = "不下单"
 _X_MARGIN_BARS = 0.65
 _Y_PADDING_RATIO = 0.07
@@ -58,6 +65,9 @@ class ChartWidget(pg.PlotWidget):
         self._candle_items: list[CandleItem] = []
         self._seq_labels: list[SeqLabelItem] = []
         self._ema_line: pg.PlotDataItem | None = None
+        self._ma_lines: dict[str, pg.PlotDataItem] = {}
+        # 均线可见性开关（由 UI checkbox 控制，默认全部隐藏）
+        self._ma_visible: dict[str, bool] = {"ma5": False, "ma10": False, "ma25": False, "ma60": False}
         self._overlay = OverlayLines()
         self._sr_items: list[pg.GraphicsItem] = []  # support/resistance level lines
         self._pending_decision: dict | None = None
@@ -88,6 +98,16 @@ class ChartWidget(pg.PlotWidget):
         if point_size == self._seq_label_font_pt:
             return
         self._seq_label_font_pt = point_size
+        if self._latest_frame is not None:
+            self._dirty = True
+
+    def set_ma_visible(self, key: str, visible: bool) -> None:
+        """Toggle visibility of an MA line (ma5/ma10/ma25/ma60) and refresh."""
+        if key not in _MA_COLORS:
+            return
+        if self._ma_visible.get(key) == visible:
+            return
+        self._ma_visible[key] = visible
         if self._latest_frame is not None:
             self._dirty = True
 
@@ -345,6 +365,9 @@ class ChartWidget(pg.PlotWidget):
         if self._ema_line is not None:
             self.removeItem(self._ema_line)
             self._ema_line = None
+        for line in self._ma_lines.values():
+            self.removeItem(line)
+        self._ma_lines.clear()
         self._latest_frame = None
         self._dirty = False
         self._fit_on_next_render = False
@@ -367,6 +390,9 @@ class ChartWidget(pg.PlotWidget):
         if self._ema_line is not None:
             self.removeItem(self._ema_line)
             self._ema_line = None
+        for line in self._ma_lines.values():
+            self.removeItem(line)
+        self._ma_lines.clear()
         bars = frame.bars
         n = len(bars)
         if n == 0:
@@ -376,6 +402,9 @@ class ChartWidget(pg.PlotWidget):
         # so x_pos for bars[i] = (n - 1 - i)
         ema_x: list[float] = []
         ema_y: list[float] = []
+        ma_pts: dict[str, tuple[list[float], list[float]]] = {
+            k: ([], []) for k in _MA_COLORS
+        }
 
         for i, bar in enumerate(bars):
             x_pos = n - 1 - i  # oldest bar at x=0, newest at x=n-1
@@ -406,6 +435,15 @@ class ChartWidget(pg.PlotWidget):
                 ema_x.append(float(x_pos))
                 ema_y.append(ema_val)
 
+            # MA points (skip NaN)
+            for k in _MA_COLORS:
+                seq = getattr(frame.indicators, k, ())
+                if i < len(seq):
+                    v = seq[i]
+                    if not math.isnan(v):
+                        ma_pts[k][0].append(float(x_pos))
+                        ma_pts[k][1].append(v)
+
         # EMA20 line (slightly dimmed through forming bar)
         if ema_x:
             newest_forming = len(bars) > 0 and not bars[0].closed
@@ -418,6 +456,23 @@ class ChartWidget(pg.PlotWidget):
                 pen=pg.mkPen(color=ema_color, width=1),
             )
             self.addItem(self._ema_line)
+
+        # MA lines (按可见性开关绘制，dimmed through forming bar)
+        newest_forming = len(bars) > 0 and not bars[0].closed
+        for k, color in _MA_COLORS.items():
+            mx, my = ma_pts[k]
+            if not self._ma_visible.get(k, False) or not mx:
+                continue
+            ma_color: tuple[int, ...] = color
+            if newest_forming:
+                ma_color = (*color, 140)
+            line = pg.PlotDataItem(
+                x=np.array(mx),
+                y=np.array(my),
+                pen=pg.mkPen(color=ma_color, width=1),
+            )
+            self.addItem(line)
+            self._ma_lines[k] = line
 
         self._update_direction_marker()
 

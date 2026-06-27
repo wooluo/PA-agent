@@ -98,6 +98,11 @@ class GeneralSettings(BaseModel):
     stream_pane_font_pt: int = Field(default=11, ge=8, le=28)
     #: K 线图上 #序号 标签的字号（pt）
     chart_seq_label_font_pt: int = Field(default=7, ge=6, le=24)
+    #: K 线图均线显示开关（MA5/MA10/MA25/MA60），跨重启保留偏好
+    chart_show_ma5: bool = False
+    chart_show_ma10: bool = False
+    chart_show_ma25: bool = False
+    chart_show_ma60: bool = False
     #: 两阶段分析结束后是否自动恢复 K 线图表实时刷新
     auto_resume_chart_after_analysis: bool = False
     #: 持续跟踪分析：有新K线收盘时自动触发新一轮分析

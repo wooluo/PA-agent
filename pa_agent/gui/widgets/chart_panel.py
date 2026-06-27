@@ -78,11 +78,13 @@ class ChartPanel(QWidget):
         legend_layout.setSpacing(16)
 
         for text, color in [
-            ("EMA10（天蓝线）", "#7dd3fc"),
-            ("EMA20（金黄线）", "#fbbf24"),
-            ("EMA60（橙红线）", "#fb923c"),
-            ("涨（绿色）", "#22c55e"),
-            ("跌（红色）", "#ef4444"),
+            ("EMA20（琥珀线）", "#ffc800"),
+            ("MA5（紫线）", "#a78bfa"),
+            ("MA10（蓝线）", "#38bdf8"),
+            ("MA25（橙线）", "#fb923c"),
+            ("MA60（绿线）", "#34d399"),
+            ("涨（红色）", "#ff4757"),
+            ("跌（绿色）", "#00d084"),
         ]:
             lbl = QLabel(text)
             lbl.setStyleSheet(

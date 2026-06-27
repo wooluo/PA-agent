@@ -60,6 +60,11 @@ class IndicatorBundle:
     """Per-bar indicator values aligned to a KlineFrame's bars list."""
     ema20: tuple[float, ...]   # len == len(bars); nan for warm-up period
     atr14: tuple[float, ...]   # len == len(bars); nan for warm-up period
+    # 简单移动均线（图表叠加用，AI 决策不依赖）。nan for warm-up period.
+    ma5: tuple[float, ...] = ()
+    ma10: tuple[float, ...] = ()
+    ma25: tuple[float, ...] = ()
+    ma60: tuple[float, ...] = ()
 
 
 # ── KlineFrame ────────────────────────────────────────────────────────────────
