@@ -163,7 +163,8 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                   trade_confidence: str = "",
                   estimated_win_rate: str = "",
                   support_resistance: list[tuple[float, str, str]] | None = None,
-                  ma_lines: dict[str, list[float]] | None = None) -> bool:
+                  ma_lines: dict[str, list[float]] | None = None,
+                  stock_name: str = "") -> bool:
     """Draw a candlestick + EMA20 chart and save to *image_path*.
 
     Returns True on success, False if matplotlib is unavailable.
@@ -300,9 +301,13 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     ax.tick_params(colors="#8b949e", labelsize=7)
     for spine in ax.spines.values():
         spine.set_edgecolor("#30363d")
+    _title = f"{symbol}"
+    if stock_name:
+        _title += f"（{stock_name}）"
+    _title += f"  {timeframe}  —  最近 {n} 根K线（K1=最新收盘）"
     ax.set_title(
-        f"{symbol} {timeframe}  —  最近 {n} 根K线（K1=最新收盘）",
-        color="#e6edf3", fontsize=10, pad=8,
+        _title,
+        color="#e6edf3", fontsize=11, pad=8, fontweight="bold",
     )
 
     # ── Order type badge (top-left corner) ────────────────────────────────────
