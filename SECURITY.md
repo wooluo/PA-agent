@@ -14,7 +14,7 @@
 请通过以下方式私下联系维护者：
 
 - GitHub：**Security Advisories**（仓库 → Security → Report a vulnerability），或
-- QQ 群（见 README）私信维护者
+- GitHub Issues 私信维护者
 
 报告中请尽量包含：
 
