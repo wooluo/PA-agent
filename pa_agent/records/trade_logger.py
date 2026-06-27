@@ -28,6 +28,21 @@ logger = logging.getLogger(__name__)
 
 _TRADE_RECORDS_DIR = Path("trade_records")
 
+
+def lookup_stock_name(symbol: str) -> str:
+    """通过东财API查询A股股票名称。失败返回空字符串。"""
+    try:
+        import urllib.request, json
+        code = symbol.strip()
+        # 6开头=沪市(secid=1)，0/3开头=深市(secid=0)
+        secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
+        url = f"https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f58"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        data = json.loads(urllib.request.urlopen(req, timeout=5).read())
+        return (data.get("data") or {}).get("f58", "")
+    except Exception:
+        return ""
+
 # Maximum bars to show in the chart image (>= 60 so MA60 has warm-up data)
 _CHART_MAX_BARS = 70
 
@@ -228,7 +243,8 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
             seq = bar.get("seq")
 
         is_bull = c >= o
-        color = "#f85149" if is_bull else "#26a641"  # A股: 红涨绿跌
+        # A股配色: 红涨绿跌
+        color = "#f85149" if is_bull else "#26a641"
 
         # Wick
         ax.plot([i, i], [l, h], color=color, linewidth=0.8, zorder=2)
@@ -277,8 +293,11 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
             series = ma_lines.get(_key)
             if not series:
                 continue
+            # MA data comes in newest-first; reverse to oldest→newest
+            # to align with the already-reversed bar axis.
+            series_asc = list(reversed(series[:n]))
             mx, my = [], []
-            for i, v in enumerate(series[:n]):
+            for i, v in enumerate(series_asc):
                 try:
                     fv = float(v)
                 except (TypeError, ValueError):
@@ -301,13 +320,13 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     ax.tick_params(colors="#8b949e", labelsize=7)
     for spine in ax.spines.values():
         spine.set_edgecolor("#30363d")
-    _title = f"{symbol}"
+    title_str = f"{symbol}"
     if stock_name:
-        _title += f"（{stock_name}）"
-    _title += f"  {timeframe}  —  最近 {n} 根K线（K1=最新收盘）"
+        title_str += f" {stock_name}"
+    title_str += f"  {timeframe}  —  最近 {n} 根K线（K1=最新收盘）"
     ax.set_title(
-        _title,
-        color="#e6edf3", fontsize=11, pad=8, fontweight="bold",
+        title_str,
+        color="#e6edf3", fontsize=11, fontweight="bold", pad=10,
     )
 
     # ── Order type badge (top-left corner) ────────────────────────────────────
@@ -355,9 +374,9 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     # Determine bull/bear from order_direction for colour defaults
     _is_long = "short" not in order_direction.lower() and "做空" not in order_direction
     _ENTRY_COLOR = "#60a5fa"   # blue
-    _TP_COLOR    = "#4ade80"   # green
-    _TP2_COLOR   = "#86efac"   # lighter green
-    _SL_COLOR    = "#f87171"   # red
+    _TP_COLOR    = "#f87171"   # red (A股: 止盈=红)
+    _TP2_COLOR   = "#fca5a5"   # lighter red
+    _SL_COLOR    = "#4ade80"   # green (A股: 止损=绿)
 
     _price_lines: list[tuple[float, str, str]] = []  # (price, color, label)
     if entry_price is not None:
@@ -436,7 +455,7 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
         _arrow_x   = n - 1                 # x = last bar index
 
         if _is_long:
-            # Up arrow: tail at low, head above — A股红色(涨)
+            # Up arrow: tail at low, head above (A股做多=红)
             _tail_y = (_last_low - _price_range * 0.01)
             _head_y = _tail_y + _arrow_len
             ax.annotate(
@@ -451,7 +470,7 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                 fontweight="bold", zorder=9,
             )
         else:
-            # Down arrow: tail at high, head below — A股绿色(跌)
+            # Down arrow: tail at high, head below (A股做空=绿)
             _tail_y = (_last_high + _price_range * 0.01)
             _head_y = _tail_y - _arrow_len
             ax.annotate(
