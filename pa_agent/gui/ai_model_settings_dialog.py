@@ -1,8 +1,7 @@
 """AI 模型设置对话框 — 只包含 AI 提供商相关字段."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -37,10 +36,7 @@ from pa_agent.ai.workbuddy_connector import (
     should_use_workbuddy_provider,
 )
 
-_API_KEY_HELP_URL = "https://my.feishu.cn/wiki/CUV1wUKWxiQGhekQdRvcZQQ2ncf"
-_AGENT_TUTORIAL_URL = (
-    "https://my.feishu.cn/wiki/BEdFwGJhaiATbukuD2HccSXCnrb?from=from_copylink"
-)
+
 
 
 class AIModelSettingsDialog(QDialog):
@@ -86,19 +82,6 @@ class AIModelSettingsDialog(QDialog):
         self._reasoning_effort_combo = QComboBox()
         self._reasoning_effort_combo.addItems(["low", "medium", "high", "max"])
         form.addRow("Reasoning Effort:", self._reasoning_effort_combo)
-
-        self._api_key_help_btn = QPushButton("小白点这里！获取程序无限Token，无限分析")
-        self._api_key_help_btn.setStyleSheet(
-            "QPushButton { font-size: 13pt; font-weight: bold; "
-            "padding: 8px 16px; }"
-        )
-        self._api_key_help_btn.clicked.connect(self._show_unlimited_token_info)
-        form.addRow("", self._api_key_help_btn)
-
-        self._agent_tutorial_btn = QPushButton("智能体使用教程及问题解决方法")
-        self._agent_tutorial_btn.setToolTip(_AGENT_TUTORIAL_URL)
-        self._agent_tutorial_btn.clicked.connect(self._open_agent_tutorial_url)
-        form.addRow("", self._agent_tutorial_btn)
 
         root.addWidget(provider_group)
 
@@ -281,29 +264,3 @@ class AIModelSettingsDialog(QDialog):
             "Cursor：模型填 openclaw_cs 后点保存（经 QClaw 走 Cursor 订阅）\n"
             "WorkBuddy：模型填 openclaw_wb 后点保存（自动配置 WorkBuddy）"
         )
-
-    def _show_unlimited_token_info(self) -> None:
-        from PyQt6.QtWidgets import QDialog as _QDialog
-        dlg = _QDialog(self)
-        dlg.setWindowTitle("获取无限Token")
-        from PyQt6.QtWidgets import QVBoxLayout as _VBox, QDialogButtonBox as _DBB
-        layout = _VBox(dlg)
-        label = QLabel(
-            "获取无限Token方法需付费49.9元，付费后你将获得<br>"
-            "Deepseek V4 Pro/GLM5.1/Kimi2.6等\"满血\"模型的无限分析方法<br>"
-            "注意无限Token只支持使用这个分析软件<br>"
-            "如果你愿意付费，请联系QQ：8995758（付费后提供远程协助部署安装服务）<br><br>"
-            "如果你不愿意付费，你可以用自己的模型api，如果你不知道模型api是什么<br>"
-            "可以直接跟龙虾说：<br>"
-            "PA_Agent这个程序的模型api有什么作用，该怎么填？<br>"
-            "请教我填上Deepseek官方的模型API接口"
-        )
-        label.setStyleSheet("font-size: 22pt;")
-        layout.addWidget(label)
-        bb = _DBB(_DBB.StandardButton.Ok)
-        bb.accepted.connect(dlg.accept)
-        layout.addWidget(bb)
-        dlg.exec()
-
-    def _open_agent_tutorial_url(self) -> None:
-        QDesktopServices.openUrl(QUrl(_AGENT_TUTORIAL_URL))
