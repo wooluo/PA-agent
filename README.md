@@ -70,5 +70,5 @@ python -m pa_agent.main
 （作者会优先解决打赏人的问题，因为人太多了！回复不过来！）
 
 <p align="center">
-  <img src="赞助码.jpeg" alt="打赏二维码" width="420" />
+  <img src="赞助码.jpg" alt="打赏二维码" width="420" />
 </p>
