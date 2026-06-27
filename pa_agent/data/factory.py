@@ -15,17 +15,22 @@ DataSourceKind = Literal[
     "tradingview",
     "akshare",
     "eastmoney",
+    "tencent",
+    "mootdx",
     "tushare",
     "yfinance",
 ]
 
 # UI-visible sources. AkShare 免登录、走东方财富，是 A 股主推源。
 # [适配] 将 AkShare/东方财富/Tushare 显示到下拉框，方便用户选择 A 股数据源。
+# [新增] 腾讯直连（零依赖快速HTTP）和 mootdx（通达信TCP，最稳定）
 DATA_SOURCE_CHOICES: tuple[tuple[DataSourceKind, str], ...] = (
     ("mt5", "MT5"),
     ("tradingview", "TradingView"),
     ("akshare", "AkShare(A股)"),
     ("eastmoney", "东方财富(A股)"),
+    ("tencent", "腾讯直连(A股)"),
+    ("mootdx", "mootdx通达信(A股)"),
     ("tushare", "Tushare(A股)"),
 )
 
@@ -38,6 +43,8 @@ _DEFAULT_SYMBOLS: dict[DataSourceKind, str] = {
     "tradingview": GOLD_TV_SYMBOL,
     "akshare": A_SHARE_DEFAULT_SYMBOL,
     "eastmoney": A_SHARE_DEFAULT_SYMBOL,
+    "tencent": A_SHARE_DEFAULT_SYMBOL,
+    "mootdx": A_SHARE_DEFAULT_SYMBOL,
     "tushare": A_SHARE_DEFAULT_SYMBOL,
     "yfinance": "GC=F",
 }
@@ -68,6 +75,10 @@ def data_source_label(kind: str | None) -> str:
         return "Tushare(A股)"
     if normalized == "akshare":
         return "AkShare"
+    if normalized == "tencent":
+        return "腾讯直连"
+    if normalized == "mootdx":
+        return "mootdx通达信"
     if normalized == "yfinance":
         return "YFinance"
     return "MT5"
@@ -98,6 +109,14 @@ def create_data_source(kind: str | None) -> DataSource:
         from pa_agent.data.akshare_source import AkShareSource
 
         return AkShareSource()
+    if normalized == "tencent":
+        from pa_agent.data.tencent_source import TencentSource
+
+        return TencentSource()
+    if normalized == "mootdx":
+        from pa_agent.data.mootdx_source import MootdxSource
+
+        return MootdxSource()
     if normalized == "yfinance":
         from pa_agent.data.yfinance_source import YFinanceSource
 
