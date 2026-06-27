@@ -227,7 +227,7 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
             seq = bar.get("seq")
 
         is_bull = c >= o
-        color = "#26a641" if is_bull else "#f85149"
+        color = "#f85149" if is_bull else "#26a641"  # A股: 红涨绿跌
 
         # Wick
         ax.plot([i, i], [l, h], color=color, linewidth=0.8, zorder=2)
@@ -431,24 +431,9 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
         _arrow_x   = n - 1                 # x = last bar index
 
         if _is_long:
-            # Up arrow: tail at low, head above
+            # Up arrow: tail at low, head above — A股红色(涨)
             _tail_y = (_last_low - _price_range * 0.01)
             _head_y = _tail_y + _arrow_len
-            ax.annotate(
-                "", xy=(_arrow_x, _head_y), xytext=(_arrow_x, _tail_y),
-                arrowprops=dict(arrowstyle="-|>", color="#4ade80",
-                                lw=2.5, mutation_scale=18),
-                zorder=8,
-            )
-            ax.text(
-                _arrow_x, _tail_y - _price_range * 0.005, "做多",
-                color="#4ade80", fontsize=8, ha="center", va="top",
-                fontweight="bold", zorder=9,
-            )
-        else:
-            # Down arrow: tail at high, head below
-            _tail_y = (_last_high + _price_range * 0.01)
-            _head_y = _tail_y - _arrow_len
             ax.annotate(
                 "", xy=(_arrow_x, _head_y), xytext=(_arrow_x, _tail_y),
                 arrowprops=dict(arrowstyle="-|>", color="#f87171",
@@ -456,8 +441,23 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                 zorder=8,
             )
             ax.text(
+                _arrow_x, _tail_y - _price_range * 0.005, "做多",
+                color="#f87171", fontsize=8, ha="center", va="top",
+                fontweight="bold", zorder=9,
+            )
+        else:
+            # Down arrow: tail at high, head below — A股绿色(跌)
+            _tail_y = (_last_high + _price_range * 0.01)
+            _head_y = _tail_y - _arrow_len
+            ax.annotate(
+                "", xy=(_arrow_x, _head_y), xytext=(_arrow_x, _tail_y),
+                arrowprops=dict(arrowstyle="-|>", color="#4ade80",
+                                lw=2.5, mutation_scale=18),
+                zorder=8,
+            )
+            ax.text(
                 _arrow_x, _tail_y + _price_range * 0.005, "做空",
-                color="#f87171", fontsize=8, ha="center", va="bottom",
+                color="#4ade80", fontsize=8, ha="center", va="bottom",
                 fontweight="bold", zorder=9,
             )
 
