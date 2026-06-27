@@ -161,7 +161,8 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                   order_type: str = "",
                   diagnosis_confidence: str = "",
                   trade_confidence: str = "",
-                  estimated_win_rate: str = "") -> bool:
+                  estimated_win_rate: str = "",
+                  support_resistance: list[tuple[float, str, str]] | None = None) -> bool:
     """Draw a candlestick + EMA20 chart and save to *image_path*.
 
     Returns True on success, False if matplotlib is unavailable.
@@ -169,6 +170,9 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     ema20_newest_first: aligned EMA20 values (NaN for warm-up bars).
     entry_price / stop_loss_price / take_profit_price / take_profit_price_2: optional price levels drawn
     as horizontal dashed lines extending into the right-side margin.
+    support_resistance: optional list of ``(price, kind, label)`` where kind is
+    ``"support"`` or ``"resistance"``; each is drawn as a dashed line mirroring
+    the main chart's support (green) / resistance (amber) styling.
     """
     try:
         import matplotlib
@@ -185,6 +189,7 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     _cjk_candidates = [
         "Microsoft YaHei", "SimHei", "WenQuanYi Micro Hei",
         "Noto Sans CJK SC", "Source Han Sans CN",
+        "PingFang SC", "Heiti SC", "STHeiti", "Songti SC",  # macOS
     ]
     _available = {f.name for f in _fm.fontManager.ttflist}
     for _fc in _cjk_candidates:
@@ -318,9 +323,9 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     if entry_price is not None:
         _price_lines.append((entry_price, _ENTRY_COLOR, f"入场  {entry_price}"))
     if take_profit_price is not None:
-        _price_lines.append((take_profit_price, _TP_COLOR, f"TP1  {take_profit_price}"))
+        _price_lines.append((take_profit_price, _TP_COLOR, f"止盈TP1  {take_profit_price}"))
     if take_profit_price_2 is not None:
-        _price_lines.append((take_profit_price_2, _TP2_COLOR, f"TP2  {take_profit_price_2}"))
+        _price_lines.append((take_profit_price_2, _TP2_COLOR, f"止盈TP2  {take_profit_price_2}"))
     if stop_loss_price is not None:
         _price_lines.append((stop_loss_price, _SL_COLOR, f"止损  {stop_loss_price}"))
 
@@ -336,6 +341,32 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
             bbox=dict(facecolor="#0d1117", edgecolor="none", alpha=0.7, pad=1.5),
             zorder=7,
         )
+
+    # ── Support / resistance structure lines ─────────────────────────────────
+    # Mirror the main chart: supports green, resistances amber. Drawn with the
+    # same dashed style as the decision lines but at lower alpha to recede.
+    _SUPPORT_COLOR = "#34d399"   # green
+    _RESIST_COLOR = "#fb923c"    # amber
+    _sr_legend_seen: set[str] = set()
+    if support_resistance:
+        for _sr in support_resistance:
+            try:
+                _sr_price, _sr_kind, _sr_label = _sr
+                _sr_price = float(_sr_price)
+            except (TypeError, ValueError):
+                continue
+            if not _sr_price > 0:
+                continue
+            _sr_color = _SUPPORT_COLOR if str(_sr_kind) == "support" else _RESIST_COLOR
+            ax.axhline(_sr_price, color=_sr_color, linewidth=0.9,
+                       linestyle="--", alpha=0.7, zorder=5)
+            ax.text(
+                _label_x, _sr_price, f"{_sr_label}  {_sr_price}",
+                color=_sr_color, fontsize=7, ha="right", va="center",
+                bbox=dict(facecolor="#0d1117", edgecolor="none", alpha=0.6, pad=1.5),
+                zorder=6,
+            )
+            _sr_legend_seen.add(str(_sr_kind))
 
     # ── Direction arrow ───────────────────────────────────────────────────────
     # Draw a prominent up/down arrow at the right edge of the last bar to show
@@ -402,13 +433,19 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                                      linestyle="--", label="入场"))
     if take_profit_price is not None:
         legend_handles.append(Line2D([0], [0], color=_TP_COLOR, linewidth=1.0,
-                                     linestyle="--", label="TP1"))
+                                     linestyle="--", label="止盈TP1"))
     if take_profit_price_2 is not None:
         legend_handles.append(Line2D([0], [0], color=_TP2_COLOR, linewidth=1.0,
-                                     linestyle="--", label="TP2"))
+                                     linestyle="--", label="止盈TP2"))
     if stop_loss_price is not None:
         legend_handles.append(Line2D([0], [0], color=_SL_COLOR, linewidth=1.0,
                                      linestyle="--", label="止损"))
+    if "support" in _sr_legend_seen:
+        legend_handles.append(Line2D([0], [0], color=_SUPPORT_COLOR, linewidth=1.0,
+                                     linestyle="--", label="支撑"))
+    if "resistance" in _sr_legend_seen:
+        legend_handles.append(Line2D([0], [0], color=_RESIST_COLOR, linewidth=1.0,
+                                     linestyle="--", label="阻力"))
 
     ax.legend(handles=legend_handles,
               facecolor="#161b22", edgecolor="#30363d", labelcolor="#e6edf3", fontsize=8)

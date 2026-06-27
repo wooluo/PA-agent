@@ -163,6 +163,29 @@ def lookup_tv_symbol_by_name(name: str) -> tuple[str, str] | None:
     return None
 
 
+def lookup_name_by_symbol(symbol: str) -> str | None:
+    """Reverse-lookup a Chinese/display name for *symbol* from the alias table.
+
+    Returns the original alias key (e.g. "小米集团", "tencent") whose mapped
+    ``(exchange, code)`` matches *symbol*, or None if no match. Used by the
+    report exporter to show a human-readable name for HK/US tickers.
+
+    Matching is case-insensitive on the symbol; HK codes are compared without
+    leading zeros (alias table stores "700" not "0700").
+    """
+    if not symbol:
+        return None
+    target = str(symbol).strip().upper()
+    # Numeric (e.g. HK "1810") — strip leading zeros for comparison
+    target_norm = target.lstrip("0") if target.isdigit() else target
+    for alias_key, (_exchange, code) in _all_aliases().items():
+        code_up = str(code).strip().upper()
+        code_norm = code_up.lstrip("0") if code_up.isdigit() else code_up
+        if code_norm == target_norm or code_up == target:
+            return alias_key
+    return None
+
+
 def resolve_tv_symbol_name(name: str) -> tuple[str, str]:
     """Resolve name to ``(exchange, symbol)``; raise if unknown."""
     hit = lookup_tv_symbol_by_name(name)

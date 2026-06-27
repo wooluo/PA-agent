@@ -4280,21 +4280,13 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_export_report(self) -> None:
-        """把最近一次分析导出为 Markdown 报告，弹出文件保存对话框。"""
+        """把最近一次分析导出为 Markdown 报告（含股票名称 + K线标线图）。"""
         record = getattr(self, "_last_analysis_record", None)
         if record is None:
             self._status_bar.showMessage("尚无分析记录，请先提交分析")
             return
-        try:
-            from pa_agent.records.report_exporter import export_report_md
 
-            md = export_report_md(record)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("报告生成失败: %s", exc, exc_info=True)
-            QMessageBox.warning(self, "导出失败", f"报告生成失败：{exc}")
-            return
-
-        # 默认文件名：symbol_timeframe_时间戳.md
+        # ── 取 meta（代码/周期/时间戳） ──────────────────────────────────────
         meta = getattr(record, "meta", None) or {}
         if hasattr(meta, "model_dump"):
             meta = meta.model_dump()
@@ -4310,13 +4302,134 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+
+        # ── 股票名称（best-effort，失败不阻断） ────────────────────────────────
+        stock_name = ""
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(md)
-            self._status_bar.showMessage(f"报告已导出：{path}")
-            logger.info("分析报告已导出: %s", path)
+            from pa_agent.records.symbol_name_resolver import resolve_stock_name
+
+            stock_name = resolve_stock_name(symbol)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("股票名称查询失败 %s: %s", symbol, exc)
+
+        # ── 渲染 K 线标线图（best-effort，matplotlib 没装/失败则降级为纯 md） ──
+        from pathlib import Path
+
+        md_path = Path(path)
+        png_filename = md_path.stem + ".png"
+        png_path = md_path.with_name(png_filename)
+        chart_ok = self._render_report_chart(record, png_path)
+
+        try:
+            from pa_agent.records.report_exporter import export_report_md
+
+            md = export_report_md(
+                record,
+                stock_name=stock_name,
+                chart_png_name=png_filename if chart_ok else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("报告生成失败: %s", exc, exc_info=True)
+            QMessageBox.warning(self, "导出失败", f"报告生成失败：{exc}")
+            return
+
+        try:
+            md_path.write_text(md, encoding="utf-8")
+            tip = f"报告已导出：{md_path}"
+            if not chart_ok:
+                tip += "（未安装 matplotlib，已跳过K线图）"
+            self._status_bar.showMessage(tip)
+            logger.info("分析报告已导出: %s", md_path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "保存失败", f"文件保存失败：{exc}")
+
+    def _render_report_chart(self, record: Any, png_path: Path) -> bool:
+        """渲染报告用 K 线标线图到 *png_path*；成功返回 True。
+
+        图含 K 线 + EMA20 + Entry/TP1/TP2/SL + 支撑/阻力位全部标线。
+        matplotlib 未装或渲染失败时返回 False（调用方降级为纯 md 报告）。
+        """
+        try:
+            from pa_agent.records.trade_logger import _render_chart
+        except ImportError:
+            return False
+
+        # kline_data: newest-first list[dict]
+        kline_data = getattr(record, "kline_data", None) or []
+        if not isinstance(kline_data, list) or not kline_data:
+            return False
+
+        # 决策价格
+        s2 = getattr(record, "stage2_decision", None) or {}
+        if hasattr(s2, "model_dump"):
+            s2 = s2.model_dump()
+        decision = s2.get("decision") or {}
+        meta = getattr(record, "meta", None) or {}
+        if hasattr(meta, "model_dump"):
+            meta = meta.model_dump()
+        symbol = meta.get("symbol", "?")
+        timeframe = meta.get("timeframe", "")
+
+        def _pf(v: Any) -> float | None:
+            try:
+                return float(v) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+
+        # ── 从 kline_data 重算 EMA20（oldest-first 喂给 ema_full） ───────────
+        ema20_newest_first: list[float] = []
+        try:
+            from pa_agent.indicators.ema import ema_full
+
+            closes_oldest = [
+                float(b.get("close")) for b in reversed(kline_data)
+                if isinstance(b, dict) and b.get("close") is not None
+            ]
+            ema_oldest = ema_full(closes_oldest, 20) if len(closes_oldest) >= 20 else []
+            # 转回 newest-first，与 bars 对齐
+            if len(ema_oldest) == len(kline_data):
+                ema20_newest_first = list(reversed(ema_oldest))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("报告图 EMA20 重算失败: %s", exc)
+            ema20_newest_first = []
+
+        # ── 支撑/阻力位（来自 stage1，复用主界面同款解析） ──────────────────────
+        support_resistance: list[tuple[float, str, str]] = []
+        try:
+            from pa_agent.gui.support_resistance import levels_from_stage1_diagnosis
+
+            s1 = getattr(record, "stage1_diagnosis", None) or {}
+            if hasattr(s1, "model_dump"):
+                s1 = s1.model_dump()
+            for lvl in levels_from_stage1_diagnosis(s1):
+                price = lvl.price
+                if price and price > 0:
+                    support_resistance.append((float(price), lvl.kind, lvl.label or lvl.kind))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("报告图支阻位提取失败: %s", exc)
+
+        try:
+            return _render_chart(
+                bars_newest_first=kline_data,
+                ema20_newest_first=ema20_newest_first,
+                symbol=symbol,
+                timeframe=timeframe,
+                image_path=png_path,
+                entry_price=_pf(decision.get("entry_price")),
+                stop_loss_price=_pf(decision.get("stop_loss_price")),
+                take_profit_price=_pf(decision.get("take_profit_price")),
+                take_profit_price_2=_pf(decision.get("take_profit_price_2")),
+                order_direction=str(decision.get("order_direction") or ""),
+                order_type=str(decision.get("order_type") or ""),
+                diagnosis_confidence=str(decision.get("diagnosis_confidence") or ""),
+                trade_confidence=str(decision.get("trade_confidence") or ""),
+                estimated_win_rate=str(decision.get("estimated_win_rate") or ""),
+                support_resistance=support_resistance or None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("报告 K 线图渲染失败: %s", exc)
+            return False
+
 
     def _open_general_settings_dialog(self) -> None:
         """打开通用设置对话框."""

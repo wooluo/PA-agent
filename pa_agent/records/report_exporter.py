@@ -1,6 +1,9 @@
 """Export an AnalysisRecord to a human-readable Markdown report.
 
-报告包含：分析结论、置信度、市场诊断依据、决策依据、风险与观察、推演结论、附录。
+报告是**纯结论报告**：分析结论（含一句决策理由）+ K 线分析图 + 推演结论 + 附录。
+文字版「置信度 / 市场诊断依据 / 决策依据 / 风险与观察」等 debug 依据不再展示——
+K 线图已含 Entry/TP1/TP2/SL 与支撑/阻力位全部标线，看图 + 结论表即可。
+
 所有字段渲染均容忍缺失/None（不下单、next_bar 未启用、分析失败等情况）。
 中文格式化复用 cycle_enums / prediction_format，保证与 UI 一致。
 """
@@ -45,14 +48,6 @@ def _direction_zh(v: Any) -> str:
     return _DIRECTION_ZH.get(str(v).strip().lower(), str(v))
 
 
-def _bullet_list(items: Any) -> str:
-    """Render a list as markdown bullets; tolerate None/non-list."""
-    if not items or not isinstance(items, (list, tuple)):
-        return "—"
-    lines = [f"- {_fmt(x)}" for x in items if x not in (None, "", [])]
-    return "\n".join(lines) if lines else "—"
-
-
 def _risk_reward_summary(decision: dict, entry: float | None) -> str:
     """算盈亏比汇总：'风险 3.10 / 回报 4.65 / RR 1.50'。方向相关。
 
@@ -84,12 +79,27 @@ def _risk_reward_summary(decision: dict, entry: float | None) -> str:
     return f"风险 {risk:.2f} / 回报 {reward:.2f} / RR {rr:.2f}"
 
 
-def export_report_md(record: Any) -> str:
+def export_report_md(
+    record: Any,
+    *,
+    stock_name: str | None = None,
+    chart_png_name: str | None = None,
+) -> str:
     """Convert an AnalysisRecord to a Markdown report string.
 
     ``record`` may be an AnalysisRecord (Pydantic) or a plain dict; both expose
     the same field names (meta, stage1_diagnosis, stage2_decision, usage_total,
     strategy_files_used, experience_loaded, exception, kline_data).
+
+    Parameters
+    ----------
+    stock_name:
+        Optional display name (e.g. "川润股份") to prepend to the header.
+        When provided the header reads "名称（代码）"; otherwise just the code.
+    chart_png_name:
+        Optional PNG filename (same dir as the .md) to embed after the
+        conclusion table. The PNG is expected to contain K-line + Entry/TP1/
+        TP2/SL + support/resistance lines.
     """
     # 统一取值：支持 Pydantic model 与 dict
     def get(name: str, default: Any = None) -> Any:
@@ -100,9 +110,6 @@ def export_report_md(record: Any) -> str:
     meta = get("meta") or {}
     if hasattr(meta, "model_dump"):
         meta = meta.model_dump()
-    s1 = get("stage1_diagnosis") or {}
-    if hasattr(s1, "model_dump"):
-        s1 = s1.model_dump()
     s2 = get("stage2_decision") or {}
     if hasattr(s2, "model_dump"):
         s2 = s2.model_dump()
@@ -113,8 +120,6 @@ def export_report_md(record: Any) -> str:
 
     decision = s2.get("decision") or {}
     terminal = s2.get("terminal") or {}
-    diagnosis_summary = s2.get("diagnosis_summary") or {}
-    decision_trace = s2.get("decision_trace") or []
     next_bar = s2.get("next_bar_prediction")
     next_cycle = s2.get("next_cycle_prediction")
 
@@ -141,7 +146,8 @@ def export_report_md(record: Any) -> str:
     parts: list[str] = []
 
     # ── 报告头 ──────────────────────────────────────────────────────────────
-    parts.append(f"# {symbol} {timeframe} 分析报告\n")
+    title = f"{stock_name}（{symbol}）" if stock_name else symbol
+    parts.append(f"# {title} {timeframe} 分析报告\n")
     price_str = f" · 当前价：{current_price}" if current_price is not None else ""
     parts.append(
         f"> 生成时间：{ts_iso} · 决策立场：{stance} · K线数：{bar_count}{price_str} · 模型：{model_name}\n"
@@ -196,98 +202,12 @@ def export_report_md(record: Any) -> str:
     if terminal.get("label"):
         parts.append(f"**决策终局**：{terminal.get('label')}（outcome={_fmt(terminal.get('outcome'))}）\n")
 
-    # ── 二、置信度 ──────────────────────────────────────────────────────────
-    parts.append("## 二、置信度\n")
-    parts.append(
-        f"- 诊断置信度：{_fmt(decision.get('diagnosis_confidence'))}% — {_fmt(decision.get('diagnosis_confidence_reasoning'))}"
-    )
-    parts.append(
-        f"- 交易置信度：{_fmt(decision.get('trade_confidence'))}% — {_fmt(decision.get('trade_confidence_reasoning'))}"
-    )
-    wr = decision.get("estimated_win_rate")
-    if wr is not None:
-        parts.append(
-            f"- 估计胜率：{wr}% — {_fmt(decision.get('estimated_win_rate_reasoning'))}"
-        )
-    parts.append("")
+    # ── K 线分析图（含 Entry/TP1/TP2/SL + 支撑/阻力位全部标线） ───────────────
+    if chart_png_name:
+        parts.append(f"![K线分析图]({chart_png_name})\n")
 
-    # ── 三、市场诊断依据 ────────────────────────────────────────────────────
-    parts.append("## 三、市场诊断依据\n")
-    cyc = diagnosis_summary.get("cycle_position") or s1.get("cycle_position")
-    d_sum = diagnosis_summary.get("direction") or s1.get("direction")
-    if cyc and d_sum:
-        parts.append(f"- 周期位置：{format_cycle_with_direction(cyc, d_sum)}")
-    elif cyc:
-        parts.append(f"- 周期位置：{format_cycle_position(cyc)}")
-    if d_sum:
-        parts.append(f"- 方向：{_direction_zh(d_sum)}")
-    key_signals = diagnosis_summary.get("key_signals") or s1.get("key_signals")
-    if key_signals:
-        parts.append(f"- 关键信号：\n{_bullet_list(key_signals)}")
-    # 阶段一补充字段（容忍缺失）—— 形态/支撑/阻力合并成单行，更紧凑
-    for src, label in (
-        (s1.get("detected_patterns"), "检测到的形态"),
-        (s1.get("support_levels"), "支撑位"),
-        (s1.get("resistance_levels"), "阻力位"),
-    ):
-        if src and isinstance(src, (list, tuple)):
-            items = [str(x) for x in src if x not in (None, "", [])]
-            if items:
-                parts.append(f"- {label}：{'、'.join(items)}")
-    if s1.get("risk_warning"):
-        parts.append(f"- 风险提示：{s1['risk_warning']}")
-    parts.append("")
-
-    # ── 四、决策依据 ────────────────────────────────────────────────────────
-    parts.append("## 四、决策依据\n")
-    key_factors = decision.get("key_factors")
-    if key_factors:
-        parts.append(f"**关键因素**：\n{_bullet_list(key_factors)}\n")
-    # 突破依据
-    basis_bits = []
-    if decision.get("entry_basis_bar"):
-        basis_bits.append(f"突破依据K线：{decision['entry_basis_bar']}")
-    if decision.get("entry_basis_extreme"):
-        basis_bits.append(f"极值类型：{decision['entry_basis_extreme']}")
-    if decision.get("entry_rule"):
-        basis_bits.append(f"挂单规则：{decision['entry_rule']}")
-    if basis_bits:
-        parts.append("**入场依据**：" + "；".join(basis_bits) + "\n")
-    # 决策树轨迹 —— "不适用"节点折叠汇总，只展开有实质判断的节点
-    if decision_trace:
-        parts.append("**决策树轨迹**：")
-        skipped: list[str] = []
-        for node in decision_trace:
-            if not isinstance(node, dict):
-                continue
-            nid = node.get("node_id", "?")
-            ans = str(node.get("answer", "")).strip()
-            reason = node.get("reason", "")
-            if ans in ("不适用", "N/A", "—", ""):
-                skipped.append(nid)
-                continue
-            line = f"- {nid}: {ans}"
-            if reason:
-                line += f" — {reason}"
-            parts.append(line)
-        if skipped:
-            parts.append(f"- 〔跳过：{', '.join(skipped)}〕")
-        parts.append("")
-    watch_points = decision.get("watch_points")
-    if watch_points:
-        parts.append(f"**观察要点**：\n{_bullet_list(watch_points)}\n")
-
-    # ── 五、风险与观察 ──────────────────────────────────────────────────────
-    parts.append("## 五、风险与观察\n")
-    if decision.get("risk_assessment"):
-        parts.append(f"**风险评估**：{decision['risk_assessment']}\n")
-    if decision.get("invalidation_condition"):
-        parts.append(f"**方案失效条件**：{decision['invalidation_condition']}\n")
-    if not decision.get("risk_assessment") and not decision.get("invalidation_condition"):
-        parts.append("—\n")
-
-    # ── 六、推演结论 ────────────────────────────────────────────────────────
-    parts.append("## 六、推演结论\n")
+    # ── 二、推演结论 ────────────────────────────────────────────────────────
+    parts.append("## 二、推演结论\n")
     # 下一根K线推演（可能未启用 → 缺失）
     if next_bar:
         _append_next_bar(parts, next_bar)
@@ -300,8 +220,8 @@ def export_report_md(record: Any) -> str:
         parts.append("_（下一市场周期推演未生成）_\n")
     parts.append("")
 
-    # ── 七、附录 ────────────────────────────────────────────────────────────
-    parts.append("## 七、附录\n")
+    # ── 三、附录 ────────────────────────────────────────────────────────────
+    parts.append("## 三、附录\n")
     prompt_t = usage.get("prompt_tokens", 0)
     completion_t = usage.get("completion_tokens", 0)
     cached_t = usage.get("cached_prompt_tokens", 0)
