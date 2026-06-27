@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 
 _TRADE_RECORDS_DIR = Path("trade_records")
 
-# Maximum bars to show in the chart image
-_CHART_MAX_BARS = 50
+# Maximum bars to show in the chart image (>= 60 so MA60 has warm-up data)
+_CHART_MAX_BARS = 70
 
 # ── CSV column definitions ─────────────────────────────────────────────────────
 
@@ -162,7 +162,8 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
                   diagnosis_confidence: str = "",
                   trade_confidence: str = "",
                   estimated_win_rate: str = "",
-                  support_resistance: list[tuple[float, str, str]] | None = None) -> bool:
+                  support_resistance: list[tuple[float, str, str]] | None = None,
+                  ma_lines: dict[str, list[float]] | None = None) -> bool:
     """Draw a candlestick + EMA20 chart and save to *image_path*.
 
     Returns True on success, False if matplotlib is unavailable.
@@ -173,6 +174,9 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
     support_resistance: optional list of ``(price, kind, label)`` where kind is
     ``"support"`` or ``"resistance"``; each is drawn as a dashed line mirroring
     the main chart's support (green) / resistance (amber) styling.
+    ma_lines: optional ``{"ma5": [...], "ma10": [...], "ma25": [...], "ma60": [...]}``
+    (each newest-first, aligned to bars, NaN for warm-up). Drawn as solid lines
+    with the same colours as the main chart (紫/蓝/橙/绿).
     """
     try:
         import matplotlib
@@ -257,6 +261,37 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
             ema_y.append(v)
     if ema_x:
         ax.plot(ema_x, ema_y, color="#fbbf24", linewidth=1.2, zorder=5, label="EMA20")
+
+    # ── MA5/10/25/60 lines ────────────────────────────────────────────────────
+    # Colours match the main chart (MA5 紫 / MA10 蓝 / MA25 橙 / MA60 绿).
+    _MA_COLORS_HEX: dict[str, str] = {
+        "ma5": "#a78bfa",
+        "ma10": "#38bdf8",
+        "ma25": "#fb923c",
+        "ma60": "#34d399",
+    }
+    ma_drawn: list[str] = []
+    if ma_lines:
+        for _key in ("ma5", "ma10", "ma25", "ma60"):
+            series = ma_lines.get(_key)
+            if not series:
+                continue
+            mx, my = [], []
+            for i, v in enumerate(series[:n]):
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isnan(fv):
+                    mx.append(i)
+                    my.append(fv)
+            if mx:
+                ax.plot(
+                    mx, my,
+                    color=_MA_COLORS_HEX[_key], linewidth=1.0, zorder=5,
+                    label=_key.upper(),  # MA5/MA10/MA25/MA60
+                )
+                ma_drawn.append(_key)
 
     # ── Styling ───────────────────────────────────────────────────────────────
     # Reserve ~8 bar-widths on the right for price labels
@@ -343,10 +378,9 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
         )
 
     # ── Support / resistance structure lines ─────────────────────────────────
-    # Mirror the main chart: supports green, resistances amber. Drawn with the
-    # same dashed style as the decision lines but at lower alpha to recede.
-    _SUPPORT_COLOR = "#34d399"   # green
-    _RESIST_COLOR = "#fb923c"    # amber
+    # Colours chosen to avoid clashing with MA lines (橙/绿) and decision lines.
+    _SUPPORT_COLOR = "#22d3ee"   # cyan
+    _RESIST_COLOR = "#f472b6"    # pink
     _sr_legend_seen: set[str] = set()
     if support_resistance:
         for _sr in support_resistance:
@@ -428,6 +462,11 @@ def _render_chart(bars_newest_first: list[Any], ema20_newest_first: list[float],
             )
 
     legend_handles = [Line2D([0], [0], color="#fbbf24", linewidth=1.5, label="EMA20")]
+    # MA lines: solid, same colours as drawn (order ma5→ma60)
+    for _key in ma_drawn:
+        legend_handles.append(Line2D([0], [0], color=_MA_COLORS_HEX[_key],
+                                     linewidth=1.0, linestyle="-",
+                                     label=_key.upper()))
     if entry_price is not None:
         legend_handles.append(Line2D([0], [0], color=_ENTRY_COLOR, linewidth=1.0,
                                      linestyle="--", label="入场"))

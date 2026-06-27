@@ -4376,22 +4376,31 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 return None
 
-        # ── 从 kline_data 重算 EMA20（oldest-first 喂给 ema_full） ───────────
+        # ── 从 kline_data 重算 EMA20 + MA5/10/25/60（oldest-first 喂指标函数） ─
         ema20_newest_first: list[float] = []
+        ma_newest_first: dict[str, list[float]] = {}
         try:
             from pa_agent.indicators.ema import ema_full
+            from pa_agent.indicators.sma import sma_full
 
             closes_oldest = [
                 float(b.get("close")) for b in reversed(kline_data)
                 if isinstance(b, dict) and b.get("close") is not None
             ]
-            ema_oldest = ema_full(closes_oldest, 20) if len(closes_oldest) >= 20 else []
-            # 转回 newest-first，与 bars 对齐
-            if len(ema_oldest) == len(kline_data):
-                ema20_newest_first = list(reversed(ema_oldest))
+            n_close = len(closes_oldest)
+            if n_close == len(kline_data):
+                # EMA20
+                if n_close >= 20:
+                    ema20_newest_first = list(reversed(ema_full(closes_oldest, 20)))
+                # MA5/10/25/60（warm-up 段为 nan，_render_chart 会跳过）
+                for key, period in (("ma5", 5), ("ma10", 10),
+                                    ("ma25", 25), ("ma60", 60)):
+                    if n_close >= period:
+                        ma_newest_first[key] = list(reversed(sma_full(closes_oldest, period)))
         except Exception as exc:  # noqa: BLE001
-            logger.debug("报告图 EMA20 重算失败: %s", exc)
+            logger.debug("报告图 EMA20/MA 重算失败: %s", exc)
             ema20_newest_first = []
+            ma_newest_first = {}
 
         # ── 支撑/阻力位（来自 stage1，复用主界面同款解析） ──────────────────────
         support_resistance: list[tuple[float, str, str]] = []
@@ -4425,6 +4434,7 @@ class MainWindow(QMainWindow):
                 trade_confidence=str(decision.get("trade_confidence") or ""),
                 estimated_win_rate=str(decision.get("estimated_win_rate") or ""),
                 support_resistance=support_resistance or None,
+                ma_lines=ma_newest_first or None,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("报告 K 线图渲染失败: %s", exc)
