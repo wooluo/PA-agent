@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -185,6 +186,28 @@ class GeneralSettingsDialog(QDialog):
 
         form_layout.addWidget(flow_group)
 
+        # ── 数据源 ──────────────────────────────────────────────────────────
+        ds_group = QGroupBox("数据源")
+        ds_form = QFormLayout(ds_group)
+
+        self._tushare_token_edit = QLineEdit()
+        self._tushare_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._tushare_token_edit.setPlaceholderText("在 tushare.pro 注册获取（留空则不使用 Tushare）")
+        self._tushare_token_edit.setToolTip(
+            "Tushare Pro 接口令牌。注册地址 https://tushare.pro\n"
+            "填写后可在「数据来源」选择 Tushare(A股)。免费 token 有积分限制。"
+        )
+        ds_form.addRow("Tushare Token:", self._tushare_token_edit)
+
+        _ts_help = QLabel(
+            '未注册？访问 <a href="https://tushare.pro/register">tushare.pro</a> 免费注册获取 token'
+        )
+        _ts_help.setOpenExternalLinks(True)
+        _ts_help.setObjectName("mutedLabel")
+        ds_form.addRow("", _ts_help)
+
+        form_layout.addWidget(ds_group)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Cancel
@@ -249,6 +272,9 @@ class GeneralSettingsDialog(QDialog):
         self._flow_default_zoom_spin.setValue(
             int(getattr(g, "decision_flow_default_zoom_pct", 600))
         )
+        # Tushare token（从 settings.tushare 读取，非 general）
+        ts = getattr(self._settings, "tushare", None)
+        self._tushare_token_edit.setText(getattr(ts, "token", "") or "")
 
     def _on_save(self) -> None:
         g = self._settings.general
@@ -273,6 +299,11 @@ class GeneralSettingsDialog(QDialog):
         g.decision_flow_auto_play = self._flow_auto_play_check.isChecked()
         g.decision_flow_play_seconds = self._flow_play_seconds_spin.value()
         g.decision_flow_default_zoom_pct = self._flow_default_zoom_spin.value()
+
+        # Tushare token 保存到 settings.tushare（非 general）
+        ts = getattr(self._settings, "tushare", None)
+        if ts is not None:
+            ts.token = self._tushare_token_edit.text().strip()
 
         save_settings(self._settings, SETTINGS_JSON_PATH)
         self.accept()

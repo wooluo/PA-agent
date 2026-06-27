@@ -27,15 +27,12 @@ def test_normalize_data_source_kind_hidden_sources():
     assert normalize_data_source_kind("yfinance") == "yfinance"
 
 
-def test_eastmoney_not_in_ui_choices():
+def test_ashare_sources_in_ui_choices():
+    """A股数据源（AkShare/东方财富/Tushare）应显示在 UI 下拉框。"""
     ui_kinds = {k for k, _ in DATA_SOURCE_CHOICES}
-    assert "eastmoney" not in ui_kinds
-    assert "akshare" not in ui_kinds
-
-
-def test_tushare_not_in_ui_choices():
-    ui_kinds = {k for k, _ in DATA_SOURCE_CHOICES}
-    assert "tushare" not in ui_kinds
+    assert "akshare" in ui_kinds
+    assert "eastmoney" in ui_kinds
+    assert "tushare" in ui_kinds
 
 
 def test_create_data_source_returns_expected_types():

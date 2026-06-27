@@ -20,16 +20,17 @@ DataSourceKind = Literal[
 ]
 
 # UI-visible sources. AkShare 免登录、走东方财富，是 A 股主推源。
-# [适配] 将 AkShare 从隐藏源改为可见源，方便用户直接在 UI 选择 A 股数据源。
-# ``eastmoney`` is config/programmatic, not listed here.
+# [适配] 将 AkShare/东方财富/Tushare 显示到下拉框，方便用户选择 A 股数据源。
 DATA_SOURCE_CHOICES: tuple[tuple[DataSourceKind, str], ...] = (
     ("mt5", "MT5"),
     ("tradingview", "TradingView"),
     ("akshare", "AkShare(A股)"),
+    ("eastmoney", "东方财富(A股)"),
+    ("tushare", "Tushare(A股)"),
 )
 
 _HIDDEN_KINDS: frozenset[DataSourceKind] = frozenset(
-    {"eastmoney", "tushare", "yfinance"}
+    {"yfinance"}
 )
 
 _DEFAULT_SYMBOLS: dict[DataSourceKind, str] = {
