@@ -839,6 +839,15 @@ class DecisionFlowVizPanel(QWidget):
 
         self._hud_label = QLabel("")
         self._hud_label.setTextFormat(Qt.TextFormat.RichText)
+        # 富文本 HUD 单行可达 ~597px，会撑大面板最小宽度，导致面板无法收缩到
+        # 侧边栏宽度，右侧「全屏推演」按钮被截到可视区外。开启自动换行 + 取消
+        # 最小宽度，让面板可随侧边栏/QSplitter 任意收窄，按钮始终可见。
+        self._hud_label.setWordWrap(True)
+        self._hud_label.setMinimumWidth(0)
+        self._hud_label.setSizePolicy(
+            self._hud_label.sizePolicy().horizontalPolicy(),
+            self._hud_label.sizePolicy().verticalPolicy(),
+        )
         self._hud_label.setStyleSheet(
             f"background-color: rgba(5, 13, 24, 220);"
             f"border: 1px solid {_NEON_CYAN}; border-radius: 8px;"
