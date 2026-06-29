@@ -567,6 +567,11 @@ class MainWindow(QMainWindow):
         self._demo_btn.setToolTip("用 records/pending 中已保存的分析记录回放界面")
         self._demo_btn.clicked.connect(self._on_demo_mode_button)
 
+        # ── 第二行工具栏（图表控制 / 状态）：与第一行(ctrl_layout)分开，
+        #    避免单行控件过多在窄屏（如 MacBook 1728 逻辑像素）右侧溢出 ──
+        ctrl_row2 = QHBoxLayout()
+        ctrl_row2.setSpacing(8)
+
         # 持续跟踪分析勾选框：勾选后有新K线收盘时自动开始新一轮分析
         # 每次启动强制为未勾选，避免程序启动时立即自动拉取数据
         self._keep_analysis_checkbox = QCheckBox("持续跟踪分析")
@@ -575,7 +580,7 @@ class MainWindow(QMainWindow):
             "勾选后，每当有新的K线收盘时自动开始新一轮分析"
         )
         self._keep_analysis_checkbox.stateChanged.connect(self._on_keep_analysis_checkbox_changed)
-        ctrl_layout.addWidget(self._keep_analysis_checkbox)
+        ctrl_row2.addWidget(self._keep_analysis_checkbox)
 
         # ── 均线显示开关（MA5/MA10/MA25/MA60）──────────────────────────────
         from PyQt6.QtWidgets import QFrame as _QFrame
@@ -583,7 +588,7 @@ class MainWindow(QMainWindow):
         _ma_sep = _QFrame()
         _ma_sep.setFrameShape(_QFrame.Shape.VLine)
         _ma_sep.setFrameShadow(_QFrame.Shadow.Sunken)
-        ctrl_layout.addWidget(_ma_sep)
+        ctrl_row2.addWidget(_ma_sep)
 
         self._ma_checkboxes: dict[str, QCheckBox] = {}
         _ma_defs = [
@@ -598,7 +603,7 @@ class MainWindow(QMainWindow):
             cb.setToolTip(f"显示 {label} 均线")
             cb.setStyleSheet(f"QCheckBox {{ color: {hex_color}; padding: 0 2px; }}")
             cb.stateChanged.connect(lambda state, k=key: self._on_ma_checkbox_changed(k, state))
-            ctrl_layout.addWidget(cb)
+            ctrl_row2.addWidget(cb)
             self._ma_checkboxes[key] = cb
         # 应用持久化的显示偏好
         if _settings is not None:
@@ -620,24 +625,25 @@ class MainWindow(QMainWindow):
             "恢复 K 线实时刷新；最右侧未收盘 K 线为浅色空心 K 线，不参与 AI 分析"
         )
         self._resume_chart_btn.clicked.connect(self._on_resume_chart_refresh)
-        ctrl_layout.addWidget(self._resume_chart_btn)
+        ctrl_row2.addWidget(self._resume_chart_btn)
 
         self._fit_chart_btn = QPushButton("恢复图表")
         self._fit_chart_btn.setToolTip(
             "自动调整图表缩放，将 K 线和价格线适配到可视区域"
         )
         self._fit_chart_btn.clicked.connect(self._on_fit_chart)
-        ctrl_layout.addWidget(self._fit_chart_btn)
+        ctrl_row2.addWidget(self._fit_chart_btn)
 
         self._decision_badge = QLabel("")
         self._decision_badge.setObjectName("mutedLabel")
-        ctrl_layout.addWidget(self._decision_badge)
+        ctrl_row2.addWidget(self._decision_badge)
 
         self._ai_mode_label = QLabel("")
         self._ai_mode_label.setObjectName("mutedLabel")
-        ctrl_layout.addWidget(self._ai_mode_label)
+        ctrl_row2.addWidget(self._ai_mode_label)
 
         outer_layout.addLayout(ctrl_layout)
+        outer_layout.addLayout(ctrl_row2)
 
         self._api_key_alert_label = QLabel(
             "未配置 API Key：请点击左上角「AI 模型」按钮，在设置中填写 API Key 后才能进行 AI 分析。"
