@@ -387,14 +387,24 @@ class AkShareSource(DataSource):
         raise last_exc
 
     def _fetch_history(self, symbol: str, timeframe: str, n: int) -> list[dict[str, Any]]:
-        # [网络适配] 日/周/月线均直接走东财 stock_zh_a_hist（_fetch_daily_ak）。
-        # 早期曾把新浪 stock_zh_a_daily 作为日线主源（东财 push2his 偶发不稳定），
-        # 但 akshare 1.18.x 的 stock_zh_a_daily 内部对流通股本/复权因子表用了
+        # [网络适配] 日线优先走新浪 stock_zh_a_daily，失败降级东财 stock_zh_a_hist。
+        # 主程序 main.py 已设 NO_PROXY="*"，国内行情域名绕过系统代理直连：
+        #   - 新浪 finance.sina.com.cn 直连稳定（实测连续多次无失败）
+        #   - 东财 push2his.eastmoney.com 在部分网络环境会被阻断
+        #     (RemoteDisconnected)，故作为降级备选保留。
+        # 注：akshare 1.18.x 的 stock_zh_a_daily 内部对流通股本/复权因子表用了
         # 裸 pd.to_datetime（无 errors="coerce"），新浪接口偶发异常格式时会抛
-        # "time data ... doesn't match format %Y-%b-%d" 导致日线稳定失败。
-        # 东财 stock_zh_a_hist 不走该解析路径，更稳定，故日线不再优先新浪。
-        # 新浪源（_fetch_daily_sina）保留方法实现，不再作为日线主源调用。
+        # "time data ... doesn't match format %Y-%b-%d"；此时自动降级东财。
+        # 周线/月线新浪源不支持，直接走东财 stock_zh_a_hist(period=weekly/monthly)。
         if timeframe in ("1d", "1w", "1M"):
+            if timeframe == "1d":
+                try:
+                    rows = self._fetch_daily_sina(symbol, n)
+                    if rows:
+                        return rows
+                    logger.info("AkShare 新浪日线返回空，降级东财源 %s", symbol)
+                except Exception as exc:
+                    logger.warning("AkShare 新浪日线失败 (%s): %s，降级东财源", symbol, exc)
             try:
                 return self._fetch_daily_ak(symbol, n, timeframe=timeframe)
             except Exception as exc:
@@ -405,7 +415,7 @@ class AkShareSource(DataSource):
                     except Exception as bs_exc:
                         logger.warning("Baostock 备用源失败 (%s): %s", symbol, bs_exc)
                         raise DataSourceTransientError(
-                            f"AkShare 东财/Baostock 均失败: {exc}; 备用: {bs_exc}"
+                            f"AkShare 新浪/东财/Baostock 均失败: {exc}; 备用: {bs_exc}"
                         ) from bs_exc
                 raise DataSourceTransientError(f"AkShare 日线拉取失败: {exc}") from exc
         try:
