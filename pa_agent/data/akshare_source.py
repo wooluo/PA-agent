@@ -404,11 +404,21 @@ class AkShareSource(DataSource):
                         return rows
                     logger.info("AkShare 新浪日线返回空，降级东财源 %s", symbol)
                 except Exception as exc:
-                    logger.warning("AkShare 新浪日线失败 (%s): %s，降级东财源", symbol, exc)
+                    # AkShare 内部日期解析错误（已知缺陷），降级时用 debug 级别
+                    exc_str = str(exc)
+                    if "doesn't match format" in exc_str or "time data" in exc_str:
+                        logger.debug("AkShare 新浪日线内部日期解析错误，降级东财源 %s", symbol)
+                    else:
+                        logger.warning("AkShare 新浪日线失败 (%s): %s，降级东财源", symbol, exc)
             try:
                 return self._fetch_daily_ak(symbol, n, timeframe=timeframe)
             except Exception as exc:
-                logger.warning("AkShare 东财 %s 失败 (%s): %s", timeframe, symbol, exc)
+                # 东财源连接问题是已知的网络适配场景，用 debug 级别
+                exc_str = str(exc)
+                if "Connection" in exc_str or "RemoteDisconnected" in exc_str or "timeout" in exc_str.lower():
+                    logger.debug("AkShare 东财 %s 连接失败 (%s)，已尝试备用源", timeframe, symbol)
+                else:
+                    logger.warning("AkShare 东财 %s 失败 (%s): %s", timeframe, symbol, exc)
                 if self._baostock_ok:
                     try:
                         return self._fetch_history_baostock(symbol, timeframe, n)
@@ -425,7 +435,12 @@ class AkShareSource(DataSource):
                 rows_60 = self._fetch_minute_ak(symbol, "60", n * 4 + 8)
                 return _resample_rows_to_4h(rows_60)[-n:]
         except Exception as exc:
-            logger.warning("AkShare 主源失败 (%s): %s", symbol, exc)
+            # 分钟线主源连接问题是已知的网络适配场景，用 debug 级别
+            exc_str = str(exc)
+            if "Connection" in exc_str or "RemoteDisconnected" in exc_str or "timeout" in exc_str.lower():
+                logger.debug("AkShare 分钟线主源连接失败 (%s)，已尝试备用源", symbol)
+            else:
+                logger.warning("AkShare 主源失败 (%s): %s", symbol, exc)
             if self._baostock_ok:
                 try:
                     return self._fetch_history_baostock(symbol, timeframe, n)
